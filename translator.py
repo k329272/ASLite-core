@@ -1,29 +1,34 @@
 """
-Loads the gloss->English T5 model produced at the end of your training
-notebook (the quantized + pruned model saved to `optimized_t5_model`) and
-translates buffered gloss token sequences into natural English text.
+Continuously re-translates the growing gloss buffer with T5 (the model
+your notebook fine-tuned and quantized), honoring already-spoken (locked)
+words as a fixed prefix the model isn't allowed to change.
+
+Mechanism: on every new gloss token, we re-tokenize the *whole* buffer and
+generate again, but force generation to start from the locked words by
+passing them in as `decoder_input_ids`. T5 then only gets to choose new
+wording for the tail beyond what's already been spoken.
 """
 
 import threading
-import queue
-from typing import List
+from typing import List, Optional
 
 import torch
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from config import TranslatorConfig
+from streaming_state import LatestSlot, SharedSentenceState
 
 
 class GlossTranslator:
     def __init__(
         self,
         cfg: TranslatorConfig,
-        input_queue: "queue.Queue[List[str]]",
-        output_queue: "queue.Queue[str]",
+        retranslate_slot: LatestSlot,
+        sentence_state: SharedSentenceState,
     ):
         self.cfg = cfg
-        self.input_queue = input_queue
-        self.output_queue = output_queue
+        self.retranslate_slot = retranslate_slot
+        self.sentence_state = sentence_state
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_path)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(cfg.model_path)
@@ -38,36 +43,64 @@ class GlossTranslator:
 
     def stop(self):
         self._stop_event.set()
-        self.input_queue.put(None)
+        self.retranslate_slot.put(("stop", None))
         self._thread.join(timeout=5)
 
-    def translate(self, gloss_tokens: List[str]) -> str:
-        gloss_text = " ".join(gloss_tokens)
+    def _forced_decoder_ids(self, locked_words: List[str]) -> Optional[torch.Tensor]:
+        if not locked_words:
+            return None
+        text = " ".join(locked_words)
+        ids = self.tokenizer(text, add_special_tokens=False).input_ids
+        decoder_start = self.model.config.decoder_start_token_id
+        return torch.tensor([[decoder_start] + ids], device=self.cfg.device)
+
+    def _retranslate(self, gloss_tokens: List[str]):
+        if not gloss_tokens:
+            return
+
+        # Read the locked prefix fresh each pass -- it may have grown since
+        # the last retranslation while TTS kept speaking in parallel.
+        locked_words = self.sentence_state.get_locked_words()
+
         inputs = self.tokenizer(
-            gloss_text,
+            " ".join(gloss_tokens),
             max_length=self.cfg.max_input_length,
             truncation=True,
             padding=True,
             return_tensors="pt",
         ).to(self.cfg.device)
 
-        with torch.no_grad():
-            output_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=self.cfg.max_new_tokens,
-                num_beams=self.cfg.num_beams,
-            )
+        gen_kwargs = dict(max_new_tokens=self.cfg.max_new_tokens, num_beams=self.cfg.num_beams)
+        forced_ids = self._forced_decoder_ids(locked_words)
+        if forced_ids is not None:
+            gen_kwargs["decoder_input_ids"] = forced_ids
 
-        return self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        with torch.no_grad():
+            output_ids = self.model.generate(**inputs, **gen_kwargs)
+
+        full_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        words = full_text.split()
+
+        # Belt-and-suspenders: guarantee the locked prefix survives verbatim
+        # even if decoding drifted (e.g. subword/spacing quirks).
+        if words[: len(locked_words)] != locked_words:
+            words = locked_words + words[len(locked_words):]
+
+        self.sentence_state.set_candidate(words)
 
     def _run(self):
         while not self._stop_event.is_set():
-            item = self.input_queue.get()
-            if item is None:
-                break
-            if not item:
+            msg = self.retranslate_slot.get(timeout=0.5)
+            if msg is None:
                 continue
-
-            text = self.translate(item)
-            if text.strip():
-                self.output_queue.put(text)
+            kind, payload = msg
+            if kind == "stop":
+                break
+            elif kind == "tokens":
+                self._retranslate(payload)
+            elif kind == "sentence_end":
+                # No more gloss tokens will arrive for this sentence; the
+                # last "tokens" retranslation already produced the final
+                # candidate. The speaker finishes voicing it and triggers
+                # the reset once every word has been spoken.
+                continue

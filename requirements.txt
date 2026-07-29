@@ -4,4 +4,6 @@ mediapipe
 numpy
 torch
 transformers
-pyttsx3
+tiny-tts
+soundfile
+sounddevice

@@ -1,45 +1,46 @@
 """
-Wires the four stages together:
+Wires the stages together:
 
   camera frames
-      -> ASLRecognizer (OpenVINO)                [per-frame gloss token / None]
-      -> AdaptiveGlossQueue                       [buffers into sentence-like chunks]
-      -> GlossTranslator (your fine-tuned T5)     [gloss chunk -> English sentence]
-      -> TTSSpeaker (pyttsx3)                     [English sentence -> speech]
+      -> ASLRecognizer (OpenVINO)              [per-frame gloss token / None]
+      -> StreamingGlossBuffer                   [accumulates tokens, detects sentence pauses]
+      -> GlossTranslator (your fine-tuned T5)   [continuously re-translates the whole buffer,
+                                                  forced to keep already-spoken words fixed]
+      -> TinyTTSSpeaker                         [speaks the next unspoken word, locking it]
 
-Each stage after the recognizer runs on its own thread and communicates via
-queue.Queue, so a slow T5 generate() call never blocks frame capture, and TTS
-playback never blocks translation.
+The translator and speaker race against each other on purpose: T5 keeps
+refining the *unspoken tail* of the sentence as new signs arrive, while TTS
+keeps locking in whatever word is currently at the front of that tail. Once
+a sentence's pause boundary hits and every word has been voiced, state is
+cleared and the next sentence starts clean.
 """
-
-import queue
 
 from config import PipelineConfig
 from asl_recognizer import ASLRecognizer
-from adaptive_queue import AdaptiveGlossQueue
+from streaming_state import LatestSlot, SharedSentenceState, StreamingGlossBuffer
 from translator import GlossTranslator
-from tts_engine import TTSSpeaker
+from tts_engine import TinyTTSSpeaker
 
 
 class ASLSpeechPipeline:
     def __init__(self, cfg: PipelineConfig):
         self.cfg = cfg
 
-        self.gloss_chunk_queue: "queue.Queue" = queue.Queue()
-        self.text_queue: "queue.Queue" = queue.Queue()
+        self.retranslate_slot = LatestSlot()
+        self.sentence_state = SharedSentenceState()
 
         self.recognizer = ASLRecognizer(cfg.asl)
-        self.gloss_queue = AdaptiveGlossQueue(cfg.queue, self.gloss_chunk_queue)
-        self.translator = GlossTranslator(cfg.translator, self.gloss_chunk_queue, self.text_queue)
-        self.speaker = TTSSpeaker(cfg.tts, self.text_queue)
+        self.gloss_buffer = StreamingGlossBuffer(cfg.queue, self.retranslate_slot, self.sentence_state)
+        self.translator = GlossTranslator(cfg.translator, self.retranslate_slot, self.sentence_state)
+        self.speaker = TinyTTSSpeaker(cfg.tts, self.sentence_state, self.gloss_buffer)
 
     def start(self):
-        self.gloss_queue.start()
+        self.gloss_buffer.start()
         self.translator.start()
         self.speaker.start()
 
     def stop(self):
-        self.gloss_queue.stop()
+        self.gloss_buffer.stop()
         self.translator.stop()
         self.speaker.stop()
 
@@ -51,6 +52,6 @@ class ASLSpeechPipeline:
         """Call this once per captured video frame."""
         prediction = self.recognizer.process_frame(frame_bgr)
         if prediction is not None and prediction.token is not None:
-            self.gloss_queue.push(prediction.token)
+            self.gloss_buffer.push(prediction.token)
             return prediction
         return None

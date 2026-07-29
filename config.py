@@ -33,17 +33,18 @@ class AdaptiveQueueConfig:
     # A run of identical consecutive tokens collapses to one (dedup)
     dedup_repeats: bool = True
 
-    # Hard ceiling on how many gloss tokens accumulate before a forced flush
+    # Hard ceiling on how many gloss tokens accumulate in one sentence before
+    # it's forced to end, even if the signer never pauses
     max_buffer_size: int = 12
 
-    # Absolute max time (seconds) a buffer can sit before a forced flush,
-    # even if the signer hasn't paused
+    # Absolute max time (seconds) one sentence can run before being forced to
+    # end, even if the signer hasn't paused
     max_wait_seconds: float = 4.0
 
-    # Minimum pause (seconds) with no new token that counts as a "sentence boundary"
+    # Minimum pause (seconds) with no new token that counts as the end of a sentence
     base_pause_seconds: float = 0.9
 
-    # Adaptive multiplier: the pause threshold used for flushing is
+    # Adaptive multiplier: the pause threshold used to end a sentence is
     # base_pause_seconds * adaptive_factor, where adaptive_factor grows/shrinks
     # based on the signer's recent average inter-token gap (faster signer -> shorter
     # pause needed to count as a break; slower signer -> more patience)
@@ -65,9 +66,10 @@ class TranslatorConfig:
 
 @dataclass
 class TTSConfig:
-    rate: int = 175          # words per minute
-    volume: float = 1.0
-    voice_id: str = ""       # leave blank for system default; see tts_engine.list_voices()
+    tinytts_checkpoint: str = "models/G.pth"  # TinyTTS pretrained checkpoint
+    tinytts_device: str = "cpu"
+    tinytts_speaker: str = "MALE"
+    tinytts_speed: float = 1.0
 
 
 @dataclass

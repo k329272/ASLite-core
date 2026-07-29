@@ -1,37 +1,61 @@
 # ASL → Speech Pipeline
 
-Real-time pipeline: webcam → OpenVINO ASL sign recognition → adaptive
-gloss-chunking queue → your fine-tuned T5 (gloss → English) → offline TTS.
+Real-time pipeline: webcam → OpenVINO ASL sign recognition → continuous
+streaming translation with word-locking → TinyTTS (lightweight neural TTS).
 
 ```
 camera frame
    │
    ▼
-ASLRecognizer (OpenVINO)                  one gloss token per confident sign
+ASLRecognizer (OpenVINO)         one gloss token per confident sign
    │
    ▼
-AdaptiveGlossQueue                        buffers tokens into sentence-like chunks,
-   │                                      flushing on a pause that adapts to signing speed
+StreamingGlossBuffer              accumulates tokens for the current sentence,
+   │                              detects a pause (adaptive to signing speed) to
+   │                              mark the sentence as ended
    ▼
-GlossTranslator (T5, from your notebook)  gloss chunk -> English sentence
-   │
+GlossTranslator (T5, from your notebook)
+   │        re-translates the ENTIRE buffer on every new token, but is forced
+   │        (via decoder_input_ids) to keep already-spoken words fixed and can
+   │        only choose new wording for the still-unspoken tail
    ▼
-TTSSpeaker (pyttsx3)                      speaks each sentence, one at a time
+TinyTTSSpeaker (word-by-word)
+   │        speaks the next unspoken word, then locks it -- T5 can never
+   │        revise it in a later pass
+   ▼
+once the sentence pause fires AND every candidate word has been spoken:
+   state resets (buffer + locked words cleared) -> next sentence starts clean
 ```
 
-Each stage after frame capture runs on its own thread and hands off through a
-`queue.Queue`, so a slow translation or TTS call never stalls sign
-recognition.
+### The locking mechanism
+
+This isn't "translate once, then speak the sentence." T5 keeps re-guessing
+the whole sentence as new signs come in — the wording after the current
+point can still change — but anything TTS has already said out loud is
+permanently fixed. Concretely:
+
+- `SharedSentenceState` holds `locked_words` (already spoken) and
+  `candidate_words` (T5's latest full guess, always starting with
+  `locked_words` unchanged).
+- Every re-translation forces T5's decoder to start from `locked_words`
+  (via `decoder_input_ids`), so it can only generate new tokens for the
+  tail — it's structurally incapable of rewriting what's locked.
+- `TinyTTSSpeaker` picks off `candidate_words[len(locked_words)]`, speaks
+  it, and only then calls `lock_next_word()` to commit it.
+- Once the signer pauses (sentence boundary) and every candidate word has
+  been voiced, `reset()` clears `locked_words`/`candidate_words` and
+  `StreamingGlossBuffer.clear()` empties the gloss buffer — a fresh start
+  for the next sentence.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `config.py` | All tunables in one place — model paths, thresholds, timing |
+| `config.py` | All tunables — model paths, thresholds, timing |
 | `asl_recognizer.py` | Loads your OpenVINO IR model, runs inference per frame |
-| `adaptive_queue.py` | Buffers/dedups gloss tokens, adaptive pause-based flushing |
-| `translator.py` | Loads `optimized_t5_model` (from your training notebook) and translates |
-| `tts_engine.py` | Offline TTS via `pyttsx3` |
+| `streaming_state.py` | `StreamingGlossBuffer` (adaptive pause/sentence-boundary detection) + `SharedSentenceState` (locked/candidate words) + `LatestSlot` (single-slot mailbox for the translator) |
+| `translator.py` | Loads `optimized_t5_model` (from your training notebook) and continuously re-translates with a locked decoder prefix |
+| `tts_engine.py` | `TinyTTSSpeaker` — word-by-word playback via TinyTTS, locking each word as it's spoken |
 | `pipeline.py` | Wires the stages together |
 | `main.py` | Webcam demo / entry point |
 
@@ -50,7 +74,16 @@ pip install -r requirements.txt
    `ASLConfig.model_xml`, and a JSON array of gloss labels (index → token, in
    the same order as your model's output classes) at `ASLConfig.labels_path`.
 
-3. **Input mode**: `ASLConfig.input_mode` controls what the recognizer feeds
+3. **TinyTTS**: `pip install tiny-tts` downloads the tokenizer/G2P assets;
+   the ~17 MB checkpoint (`G.pth`) needs to be placed at the path in
+   `TTSConfig.tinytts_checkpoint`. TinyTTS is a small, fast-moving project —
+   check the installed version's actual Python API (`pip show tiny-tts`)
+   against `tts_engine.py`'s `_TinyTTSEngine(...)` / `.speak(...)` calls,
+   which are inferred from its published CLI flags
+   (`--checkpoint --speaker --speed --device`), and adjust kwargs if they've
+   changed.
+
+4. **Input mode**: `ASLConfig.input_mode` controls what the recognizer feeds
    the model:
    - `"landmarks"` (default) — extracts MediaPipe hand landmarks per frame and
      feeds a 126-float vector (2 hands × 21 landmarks × xyz). Cheapest and
@@ -73,30 +106,38 @@ python main.py
 Press `q` to quit. On-screen you'll see the current recognized sign and the
 most recently spoken sentence.
 
-## Tuning the adaptive queue
+## Tuning the sentence boundary
 
-`AdaptiveQueueConfig` in `config.py`:
+`AdaptiveQueueConfig` in `config.py` (used by `StreamingGlossBuffer`):
 - `base_pause_seconds` / `min_adaptive_factor` / `max_adaptive_factor` control
-  how long a pause in signing must be before a buffered gloss chunk is sent
-  to translation — this threshold shrinks for fast signers and grows for slow
-  ones, based on a rolling average of recent inter-sign gaps.
-- `max_buffer_size` / `max_wait_seconds` are hard ceilings so a chunk is
-  never held indefinitely even if no natural pause occurs.
+  how long a pause in signing must be before the sentence is marked ended —
+  this threshold shrinks for fast signers and grows for slow ones, based on
+  a rolling average of recent inter-sign gaps.
+- `max_buffer_size` / `max_wait_seconds` are hard ceilings so a sentence is
+  never left open indefinitely even if no natural pause occurs.
 - `dedup_repeats` collapses a held sign across consecutive frames into a
   single gloss token (otherwise you'd get `"HELLO HELLO HELLO"` instead of
   `"HELLO"`), matching the token granularity T5 was trained on.
 
 ## Notes / things you'll likely want to change
 
-- `pyttsx3` is fully offline and near-zero latency, which is why it was
-  chosen for "lightweight TTS" — but voice quality is robotic. If you later
-  want more natural speech at the cost of some latency/footprint, swap
-  `tts_engine.py` for something like Piper (still lightweight, ONNX-based,
-  runs well on CPU) without touching any other file — it only needs to
-  consume strings off `text_queue`.
+- **Locked-word risk**: because TTS commits to a word the moment it's
+  spoken, an early greedy commitment can occasionally lock in a word T5
+  would have phrased differently with more context (a well-known tradeoff
+  in simultaneous/streaming translation). If this happens too often for
+  your gloss vocabulary, consider adding a short "look-ahead" delay before
+  locking (e.g. only lock a word once it has survived N consecutive
+  re-translations unchanged) — that logic would live in
+  `TinyTTSSpeaker._run()`.
+- **TinyTTS latency**: the current implementation synthesizes each word to
+  a temp WAV file and plays it back via `sounddevice`/`soundfile`. If
+  TinyTTS's installed API exposes a raw-array method (returning audio
+  directly instead of writing a file), swap that in for lower per-word
+  latency.
 - The confidence threshold (`ASLConfig.confidence_threshold`) is what
   prevents transition/blur frames between signs from being treated as real
   tokens. Tune it against your model's actual softmax behavior.
-- `GlossTranslator.translate()` uses beam search (`num_beams=4`) to match
-  higher-quality generation; drop to `num_beams=1` (greedy) if you need
-  lower latency over quality on weaker hardware.
+- `GlossTranslator._retranslate()` uses beam search (`num_beams=4`); drop to
+  `num_beams=1` (greedy) for lower per-token latency if re-translation is
+  falling behind the signer's pace (watch for the translator's queue never
+  catching up — `LatestSlot` will silently drop stale updates in that case).
