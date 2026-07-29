@@ -28,7 +28,9 @@ from config import AdaptiveQueueConfig
 
 
 class AdaptiveGlossQueue:
-    def __init__(self, cfg: AdaptiveQueueConfig, output_queue: "queue.Queue[List[str]]"):
+    def __init__(
+        self, cfg: AdaptiveQueueConfig, output_queue: "queue.Queue[List[str]]"
+    ):
         self.cfg = cfg
         self.output_queue = output_queue
 

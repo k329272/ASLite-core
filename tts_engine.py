@@ -48,7 +48,9 @@ from streaming_state import SharedSentenceState, StreamingGlossBuffer
 
 logger = logging.getLogger(__name__)
 
-_SENTENCE_DONE = object()  # sentinel: everything for the current sentence has been queued
+_SENTENCE_DONE = (
+    object()
+)  # sentinel: everything for the current sentence has been queued
 
 
 class TinyTTSSpeaker:
@@ -70,8 +72,12 @@ class TinyTTSSpeaker:
         self.last_spoken_text = ""  # readable by other threads for UI display only
         self._play_queue: "queue.Queue" = queue.Queue()
         self._stop_event = threading.Event()
-        self._decision_thread = threading.Thread(target=self._decision_loop, daemon=True)
-        self._playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
+        self._decision_thread = threading.Thread(
+            target=self._decision_loop, daemon=True
+        )
+        self._playback_thread = threading.Thread(
+            target=self._playback_loop, daemon=True
+        )
 
     def start(self):
         self._decision_thread.start()
@@ -102,7 +108,9 @@ class TinyTTSSpeaker:
     def _decision_loop(self):
         while not self._stop_event.is_set():
             try:
-                word = self.sentence_state.get_stable_next_word(self.cfg.min_word_stability)
+                word = self.sentence_state.get_stable_next_word(
+                    self.cfg.min_word_stability
+                )
                 if word is not None:
                     locked = self.sentence_state.lock_next_word()
                     if locked is None:
@@ -119,7 +127,10 @@ class TinyTTSSpeaker:
                     # sentence and reset the shared state, so we don't spin
                     # re-detecting "fully_spoken" against a sentence that's
                     # already been cleared out from under us.
-                    while not self._stop_event.is_set() and self.sentence_state.is_sentence_ended():
+                    while (
+                        not self._stop_event.is_set()
+                        and self.sentence_state.is_sentence_ended()
+                    ):
                         time.sleep(0.02)
                     continue
 

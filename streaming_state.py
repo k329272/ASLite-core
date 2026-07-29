@@ -246,11 +246,16 @@ class StreamingGlossBuffer:
                 self._new_token_event.wait(timeout=0.2)
                 self._new_token_event.clear()
 
-                if self._sentence_started_at is None or self.sentence_state.is_sentence_ended():
+                if (
+                    self._sentence_started_at is None
+                    or self.sentence_state.is_sentence_ended()
+                ):
                     continue
 
                 pause_threshold = self._current_pause_threshold()
-                elapsed_since_last = time.time() - (self._last_token_time or time.time())
+                elapsed_since_last = time.time() - (
+                    self._last_token_time or time.time()
+                )
                 elapsed_since_start = time.time() - self._sentence_started_at
 
                 if (

@@ -41,7 +41,9 @@ def main():
             try:
                 prediction = pipeline.on_frame(frame)
             except Exception:
-                logging.getLogger(__name__).exception("Error processing frame; skipping it")
+                logging.getLogger(__name__).exception(
+                    "Error processing frame; skipping it"
+                )
                 prediction = None
 
             if prediction is not None:
@@ -50,12 +52,22 @@ def main():
                 last_sentence_shown = pipeline.last_spoken_text
 
             cv2.putText(
-                frame, f"Sign: {last_token_shown}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2,
+                frame,
+                f"Sign: {last_token_shown}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 0),
+                2,
             )
             cv2.putText(
-                frame, f"Last: {last_sentence_shown}", (10, 60),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2,
+                frame,
+                f"Last: {last_sentence_shown}",
+                (10, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 200, 255),
+                2,
             )
             cv2.imshow("ASL -> Speech", frame)
 

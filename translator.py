@@ -73,7 +73,9 @@ class GlossTranslator:
             return_tensors="pt",
         ).to(self.cfg.device)
 
-        gen_kwargs = dict(max_new_tokens=self.cfg.max_new_tokens, num_beams=self.cfg.num_beams)
+        gen_kwargs = dict(
+            max_new_tokens=self.cfg.max_new_tokens, num_beams=self.cfg.num_beams
+        )
         forced_ids = self._forced_decoder_ids(locked_words)
         if forced_ids is not None:
             gen_kwargs["decoder_input_ids"] = forced_ids
@@ -87,7 +89,7 @@ class GlossTranslator:
         # Belt-and-suspenders: guarantee the locked prefix survives verbatim
         # even if decoding drifted (e.g. subword/spacing quirks).
         if words[: len(locked_words)] != locked_words:
-            words = locked_words + words[len(locked_words):]
+            words = locked_words + words[len(locked_words) :]
 
         self.sentence_state.set_candidate(words)
         self.sentence_state.record_translated_token_count(len(gloss_tokens))

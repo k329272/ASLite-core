@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ASLPrediction:
-    token: Optional[str]   # gloss token, or None if below confidence threshold
+    token: Optional[str]  # gloss token, or None if below confidence threshold
     confidence: float
     timestamp: float
 
@@ -59,6 +59,7 @@ class ASLRecognizer:
 
         if cfg.input_mode == "landmarks":
             import mediapipe as mp
+
             self._mp_hands = mp.solutions.hands.Hands(
                 static_image_mode=False,
                 max_num_hands=2,
@@ -123,11 +124,15 @@ class ASLRecognizer:
             self._pending_count = 1
 
         if self._pending_count < self.cfg.min_stable_frames:
-            return ASLPrediction(token=None, confidence=raw.confidence, timestamp=raw.timestamp)
+            return ASLPrediction(
+                token=None, confidence=raw.confidence, timestamp=raw.timestamp
+            )
 
         if raw.token == self._confirmed_label:
             # Still holding the same already-accepted sign -- nothing new to emit.
-            return ASLPrediction(token=None, confidence=raw.confidence, timestamp=raw.timestamp)
+            return ASLPrediction(
+                token=None, confidence=raw.confidence, timestamp=raw.timestamp
+            )
 
         self._confirmed_label = raw.token
         return raw

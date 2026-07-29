@@ -30,8 +30,12 @@ class ASLSpeechPipeline:
         self.sentence_state = SharedSentenceState()
 
         self.recognizer = ASLRecognizer(cfg.asl)
-        self.gloss_buffer = StreamingGlossBuffer(cfg.queue, self.retranslate_slot, self.sentence_state)
-        self.translator = GlossTranslator(cfg.translator, self.retranslate_slot, self.sentence_state)
+        self.gloss_buffer = StreamingGlossBuffer(
+            cfg.queue, self.retranslate_slot, self.sentence_state
+        )
+        self.translator = GlossTranslator(
+            cfg.translator, self.retranslate_slot, self.sentence_state
+        )
         self.speaker = TinyTTSSpeaker(cfg.tts, self.sentence_state, self.gloss_buffer)
 
     def start(self):

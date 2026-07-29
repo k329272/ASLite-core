@@ -65,7 +65,9 @@ class AdaptiveQueueConfig:
 
 @dataclass
 class TranslatorConfig:
-    model_path: str = "optimized_t5_model"  # the folder saved in your notebook's last cell
+    model_path: str = (
+        "optimized_t5_model"  # the folder saved in your notebook's last cell
+    )
     device: str = "cpu"  # quantized model was exported for CPU
     max_input_length: int = 64
     max_new_tokens: int = 64
