@@ -16,12 +16,15 @@ speaking every locked word, the whole buffer + locked state is cleared and
 the next sentence starts from scratch.
 """
 
+import logging
 import threading
 import time
 from collections import deque
 from typing import List, Optional, Tuple
 
 from config import AdaptiveQueueConfig
+
+logger = logging.getLogger(__name__)
 
 
 class LatestSlot:
@@ -60,6 +63,27 @@ class SharedSentenceState:
         self.candidate_words: List[str] = []
         self.sentence_ended = False  # True once no more new signs are coming
 
+        # Lets the speaker know the translator has actually processed the
+        # most recent gloss token before declaring a sentence fully spoken
+        # (otherwise "fully spoken" could fire one token too early, while
+        # the translator is still mid-inference on the latest buffer).
+        self.expected_token_count = 0
+        self.translated_token_count = 0
+
+        # Tracks how many consecutive re-translations produced the same
+        # word as the current tail (first unlocked) position, so the
+        # speaker can require a word to be "stable" before committing to it.
+        self._tail_stability_word: Optional[str] = None
+        self._tail_stability_count = 0
+
+    def record_expected_token_count(self, n: int):
+        with self._lock:
+            self.expected_token_count = n
+
+    def record_translated_token_count(self, n: int):
+        with self._lock:
+            self.translated_token_count = n
+
     def set_candidate(self, words: List[str]):
         with self._lock:
             n = len(self.locked_words)
@@ -69,17 +93,44 @@ class SharedSentenceState:
                 words = self.locked_words + words[n:]
             self.candidate_words = words
 
+            tail_word = words[n] if n < len(words) else None
+            if tail_word == self._tail_stability_word:
+                self._tail_stability_count += 1
+            else:
+                self._tail_stability_word = tail_word
+                self._tail_stability_count = 1
+
     def get_candidate_and_locked_count(self) -> Tuple[List[str], int]:
         with self._lock:
             return list(self.candidate_words), len(self.locked_words)
 
+    def get_stable_next_word(self, min_stability: int) -> Optional[str]:
+        """Returns the next unlocked word iff it's safe to commit to: either
+        it's survived `min_stability` consecutive re-translations unchanged,
+        or the sentence has ended and translation has caught up (final
+        drain -- nothing more will change it, so there's no reason to wait)."""
+        with self._lock:
+            n = len(self.locked_words)
+            if n >= len(self.candidate_words):
+                return None
+            word = self.candidate_words[n]
+            caught_up = self.translated_token_count >= self.expected_token_count
+            if self.sentence_ended and caught_up:
+                return word
+            if self._tail_stability_count >= min_stability:
+                return word
+            return None
+
     def lock_next_word(self) -> Optional[str]:
-        """Call right after TTS actually says the next word out loud."""
+        """Call right after TTS actually commits to saying the next word."""
         with self._lock:
             n = len(self.locked_words)
             if n < len(self.candidate_words):
                 word = self.candidate_words[n]
                 self.locked_words.append(word)
+                # Reset stability tracking for the new tail position.
+                self._tail_stability_word = None
+                self._tail_stability_count = 0
                 return word
             return None
 
@@ -97,13 +148,21 @@ class SharedSentenceState:
 
     def fully_spoken(self) -> bool:
         with self._lock:
-            return self.sentence_ended and len(self.locked_words) == len(self.candidate_words)
+            return (
+                self.sentence_ended
+                and self.translated_token_count >= self.expected_token_count
+                and len(self.locked_words) == len(self.candidate_words)
+            )
 
     def reset(self):
         with self._lock:
             self.locked_words = []
             self.candidate_words = []
             self.sentence_ended = False
+            self.expected_token_count = 0
+            self.translated_token_count = 0
+            self._tail_stability_word = None
+            self._tail_stability_count = 0
 
 
 class StreamingGlossBuffer:
@@ -152,6 +211,7 @@ class StreamingGlossBuffer:
         if self._sentence_started_at is None:
             self._sentence_started_at = now
 
+        self.sentence_state.record_expected_token_count(len(self._tokens))
         self.retranslate_slot.put(("tokens", list(self._tokens)))
         self._new_token_event.set()
 
@@ -182,18 +242,21 @@ class StreamingGlossBuffer:
 
     def _watch_pauses(self):
         while not self._stop_event.is_set():
-            self._new_token_event.wait(timeout=0.2)
-            self._new_token_event.clear()
+            try:
+                self._new_token_event.wait(timeout=0.2)
+                self._new_token_event.clear()
 
-            if self._sentence_started_at is None or self.sentence_state.is_sentence_ended():
-                continue
+                if self._sentence_started_at is None or self.sentence_state.is_sentence_ended():
+                    continue
 
-            pause_threshold = self._current_pause_threshold()
-            elapsed_since_last = time.time() - (self._last_token_time or time.time())
-            elapsed_since_start = time.time() - self._sentence_started_at
+                pause_threshold = self._current_pause_threshold()
+                elapsed_since_last = time.time() - (self._last_token_time or time.time())
+                elapsed_since_start = time.time() - self._sentence_started_at
 
-            if (
-                elapsed_since_last >= pause_threshold
-                or elapsed_since_start >= self.cfg.max_wait_seconds
-            ):
-                self._end_sentence()
+                if (
+                    elapsed_since_last >= pause_threshold
+                    or elapsed_since_start >= self.cfg.max_wait_seconds
+                ):
+                    self._end_sentence()
+            except Exception:
+                logger.exception("Error in gloss-buffer pause watcher; continuing")

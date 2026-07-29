@@ -7,10 +7,17 @@ Usage:
 Press 'q' to quit.
 """
 
+import logging
+
 import cv2
 
 from config import PipelineConfig
 from pipeline import ASLSpeechPipeline
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 
 def main():
@@ -31,7 +38,12 @@ def main():
             if not ok:
                 break
 
-            prediction = pipeline.on_frame(frame)
+            try:
+                prediction = pipeline.on_frame(frame)
+            except Exception:
+                logging.getLogger(__name__).exception("Error processing frame; skipping it")
+                prediction = None
+
             if prediction is not None:
                 last_token_shown = f"{prediction.token} ({prediction.confidence:.2f})"
             if pipeline.last_spoken_text:

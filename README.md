@@ -119,25 +119,53 @@ most recently spoken sentence.
   single gloss token (otherwise you'd get `"HELLO HELLO HELLO"` instead of
   `"HELLO"`), matching the token granularity T5 was trained on.
 
-## Notes / things you'll likely want to change
+## Recent improvements
 
-- **Locked-word risk**: because TTS commits to a word the moment it's
-  spoken, an early greedy commitment can occasionally lock in a word T5
-  would have phrased differently with more context (a well-known tradeoff
-  in simultaneous/streaming translation). If this happens too often for
-  your gloss vocabulary, consider adding a short "look-ahead" delay before
-  locking (e.g. only lock a word once it has survived N consecutive
-  re-translations unchanged) — that logic would live in
-  `TinyTTSSpeaker._run()`.
-- **TinyTTS latency**: the current implementation synthesizes each word to
-  a temp WAV file and plays it back via `sounddevice`/`soundfile`. If
-  TinyTTS's installed API exposes a raw-array method (returning audio
-  directly instead of writing a file), swap that in for lower per-word
-  latency.
+- **Sign-stability smoothing** (`ASLConfig.min_stable_frames`): a predicted
+  sign must be the top prediction for several consecutive inference passes
+  before it's accepted as a new gloss token. Since locked words can never
+  be revised once spoken, a single flickering frame turning into a wrong
+  token was the most expensive kind of error in this pipeline — this cuts
+  false positives at the source, at the cost of a little acceptance latency.
+- **Word-locking stability** (`TTSConfig.min_word_stability`): a candidate
+  tail word must survive this many consecutive re-translations unchanged
+  before it's locked and spoken, rather than committing to whatever T5
+  outputs first. During the final sentence drain (signer has paused and
+  translation has caught up), remaining words are spoken immediately since
+  nothing more is coming to change them — see `SharedSentenceState.
+  get_stable_next_word`.
+- **Translator/speaker catch-up race fixed**: `SharedSentenceState` now
+  tracks `expected_token_count` (set on every accepted gloss token) vs.
+  `translated_token_count` (set after each successful re-translation).
+  `fully_spoken()` requires these to match before finalizing a sentence, so
+  the speaker can no longer declare a sentence done based on a candidate
+  that hasn't yet incorporated the very last sign.
+- **Pipelined TTS**: `TinyTTSSpeaker` now runs a decision/synthesis thread
+  and a separate playback thread. A word is locked and its audio
+  synthesized as soon as it's stable, without waiting for the previous
+  word to finish playing — so synthesis of word N+1 overlaps with playback
+  of word N instead of leaving dead air between every word. Locking
+  happens the moment a word is committed to the playback queue (guaranteed
+  to be spoken next in order), not the exact instant its audio starts.
+- **Resilience**: every background thread (gloss-buffer pause watcher,
+  translator, TTS decision loop, TTS playback loop) now catches and logs
+  exceptions per-iteration instead of dying silently on the first bad
+  inference call or synthesis failure. `main.py` configures basic logging
+  and guards each frame's processing the same way.
+
+## Notes / things you might still want to change
+
+- **TinyTTS latency**: each word is still synthesized via a temp WAV
+  file + `soundfile`/`sounddevice` round trip. If TinyTTS's installed API
+  exposes a method that returns a raw array directly (skipping the file),
+  swap that into `TinyTTSSpeaker._synthesize` for lower per-word latency.
 - The confidence threshold (`ASLConfig.confidence_threshold`) is what
   prevents transition/blur frames between signs from being treated as real
-  tokens. Tune it against your model's actual softmax behavior.
+  tokens in the first place — tune it against your model's actual softmax
+  behavior, in tandem with `min_stable_frames`.
 - `GlossTranslator._retranslate()` uses beam search (`num_beams=4`); drop to
   `num_beams=1` (greedy) for lower per-token latency if re-translation is
   falling behind the signer's pace (watch for the translator's queue never
-  catching up — `LatestSlot` will silently drop stale updates in that case).
+  catching up — `LatestSlot` will silently drop stale updates in that case,
+  and `expected_token_count` vs. `translated_token_count` growing apart is
+  a good signal this is happening).

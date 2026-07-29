@@ -24,6 +24,14 @@ class ASLConfig:
     # (rejects the implicit "no sign" / transition frames)
     confidence_threshold: float = 0.65
 
+    # A predicted sign must be the top prediction for this many consecutive
+    # inference passes before it's accepted as a new gloss token. Since
+    # locked words can never be revised once spoken, a single flickering
+    # frame turning into a wrong gloss token is the most expensive kind of
+    # error in this pipeline -- this trades a little latency for a big
+    # reduction in false positives.
+    min_stable_frames: int = 3
+
     # Run inference at most this many times per second (throttles CPU use)
     inference_fps: int = 15
 
@@ -70,6 +78,15 @@ class TTSConfig:
     tinytts_device: str = "cpu"
     tinytts_speaker: str = "MALE"
     tinytts_speed: float = 1.0
+
+    # A candidate tail word must come back unchanged across this many
+    # consecutive re-translations before it's locked & spoken. Guards
+    # against committing to a word T5 would have phrased differently with
+    # a bit more context (classic greedy-commit risk in any simultaneous
+    # translation system). Ignored during final sentence drain -- once the
+    # signer has paused and translation has caught up, remaining words are
+    # spoken immediately since nothing more is coming to change them.
+    min_word_stability: int = 2
 
 
 @dataclass

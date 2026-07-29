@@ -9,6 +9,7 @@ passing them in as `decoder_input_ids`. T5 then only gets to choose new
 wording for the tail beyond what's already been spoken.
 """
 
+import logging
 import threading
 from typing import List, Optional
 
@@ -17,6 +18,8 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from config import TranslatorConfig
 from streaming_state import LatestSlot, SharedSentenceState
+
+logger = logging.getLogger(__name__)
 
 
 class GlossTranslator:
@@ -87,6 +90,7 @@ class GlossTranslator:
             words = locked_words + words[len(locked_words):]
 
         self.sentence_state.set_candidate(words)
+        self.sentence_state.record_translated_token_count(len(gloss_tokens))
 
     def _run(self):
         while not self._stop_event.is_set():
@@ -96,11 +100,14 @@ class GlossTranslator:
             kind, payload = msg
             if kind == "stop":
                 break
-            elif kind == "tokens":
-                self._retranslate(payload)
-            elif kind == "sentence_end":
-                # No more gloss tokens will arrive for this sentence; the
-                # last "tokens" retranslation already produced the final
-                # candidate. The speaker finishes voicing it and triggers
-                # the reset once every word has been spoken.
-                continue
+            try:
+                if kind == "tokens":
+                    self._retranslate(payload)
+                elif kind == "sentence_end":
+                    # No more gloss tokens will arrive for this sentence; the
+                    # last "tokens" retranslation already produced the final
+                    # candidate. The speaker finishes voicing it and triggers
+                    # the reset once every word has been spoken.
+                    continue
+            except Exception:
+                logger.exception("Retranslation failed; keeping previous candidate")

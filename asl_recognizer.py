@@ -14,6 +14,7 @@ assumes a single input / single output classification model; adjust
 """
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -23,6 +24,8 @@ import cv2
 import openvino as ov
 
 from config import ASLConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,6 +40,13 @@ class ASLRecognizer:
         self.cfg = cfg
         self._min_interval = 1.0 / cfg.inference_fps
         self._last_infer_time = 0.0
+
+        # Stability-smoothing state: a sign must be the top prediction for
+        # `cfg.min_stable_frames` consecutive inference passes before it's
+        # accepted and returned as a new token.
+        self._pending_label: Optional[str] = None
+        self._pending_count = 0
+        self._confirmed_label: Optional[str] = None
 
         with open(cfg.labels_path, "r") as f:
             self.labels = json.load(f)
@@ -97,20 +107,53 @@ class ASLRecognizer:
         e = np.exp(x - np.max(x))
         return e / e.sum()
 
+    def _stabilize(self, raw: ASLPrediction) -> ASLPrediction:
+        """Only lets a prediction through as a real token once the same
+        label has been the top prediction for several consecutive passes,
+        and only once per stable run (not on every subsequent frame)."""
+        if raw.token is None:
+            self._pending_label = None
+            self._pending_count = 0
+            return raw
+
+        if raw.token == self._pending_label:
+            self._pending_count += 1
+        else:
+            self._pending_label = raw.token
+            self._pending_count = 1
+
+        if self._pending_count < self.cfg.min_stable_frames:
+            return ASLPrediction(token=None, confidence=raw.confidence, timestamp=raw.timestamp)
+
+        if raw.token == self._confirmed_label:
+            # Still holding the same already-accepted sign -- nothing new to emit.
+            return ASLPrediction(token=None, confidence=raw.confidence, timestamp=raw.timestamp)
+
+        self._confirmed_label = raw.token
+        return raw
+
     def process_frame(self, frame_bgr: np.ndarray) -> Optional[ASLPrediction]:
         """Call once per captured video frame. Internally throttled to
         cfg.inference_fps and returns None on frames that are skipped or
-        where no sign was detected/confident."""
+        where no sign was detected/confident/stable yet."""
         now = time.time()
         if now - self._last_infer_time < self._min_interval:
             return None
         self._last_infer_time = now
 
-        if self.cfg.input_mode == "landmarks":
-            vec = self._extract_landmarks(frame_bgr)
-            if vec is None:
-                return None
-            return self._infer(vec)
-        else:
-            tensor = self._prep_frame(frame_bgr)
-            return self._infer(tensor)
+        try:
+            if self.cfg.input_mode == "landmarks":
+                vec = self._extract_landmarks(frame_bgr)
+                if vec is None:
+                    self._pending_label = None
+                    self._pending_count = 0
+                    return None
+                raw = self._infer(vec)
+            else:
+                tensor = self._prep_frame(frame_bgr)
+                raw = self._infer(tensor)
+        except Exception:
+            logger.exception("ASL inference failed on this frame; skipping it")
+            return None
+
+        return self._stabilize(raw)
