@@ -1,0 +1,7 @@
+openvino>=2024.0
+opencv-python
+mediapipe
+numpy
+torch
+transformers
+pyttsx3
