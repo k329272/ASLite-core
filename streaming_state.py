@@ -38,12 +38,14 @@ class LatestSlot:
         self._has_value = False
 
     def put(self, value):
+        """Store the latest value and wake any waiting consumer."""
         with self._cond:
             self._value = value
             self._has_value = True
             self._cond.notify_all()
 
     def get(self, timeout: Optional[float] = None):
+        """Return the latest value, waiting until one is available."""
         with self._cond:
             got = self._cond.wait_for(lambda: self._has_value, timeout=timeout)
             if not got:
@@ -77,14 +79,17 @@ class SharedSentenceState:
         self._tail_stability_count = 0
 
     def record_expected_token_count(self, n: int):
+        """Record how many tokens the translator is expected to process."""
         with self._lock:
             self.expected_token_count = n
 
     def record_translated_token_count(self, n: int):
+        """Record how many tokens the translator has already processed."""
         with self._lock:
             self.translated_token_count = n
 
     def set_candidate(self, words: List[str]):
+        """Store the latest candidate sentence and update tail stability."""
         with self._lock:
             n = len(self.locked_words)
             # Safety net: a retranslation must never alter an already-spoken word,
@@ -101,6 +106,7 @@ class SharedSentenceState:
                 self._tail_stability_count = 1
 
     def get_candidate_and_locked_count(self) -> Tuple[List[str], int]:
+        """Return a copy of the candidate words and the number of locked words."""
         with self._lock:
             return list(self.candidate_words), len(self.locked_words)
 
@@ -135,18 +141,22 @@ class SharedSentenceState:
             return None
 
     def get_locked_words(self) -> List[str]:
+        """Return a snapshot of the currently locked words."""
         with self._lock:
             return list(self.locked_words)
 
     def mark_sentence_ended(self):
+        """Mark the current sentence as finished so the speaker can drain it."""
         with self._lock:
             self.sentence_ended = True
 
     def is_sentence_ended(self) -> bool:
+        """Return whether the current sentence has ended."""
         with self._lock:
             return self.sentence_ended
 
     def fully_spoken(self) -> bool:
+        """Return whether every word in the sentence has been spoken."""
         with self._lock:
             return (
                 self.sentence_ended
@@ -155,6 +165,7 @@ class SharedSentenceState:
             )
 
     def reset(self):
+        """Clear the sentence state and start the next sentence fresh."""
         with self._lock:
             self.locked_words = []
             self.candidate_words = []
@@ -191,14 +202,17 @@ class StreamingGlossBuffer:
         self._thread = threading.Thread(target=self._watch_pauses, daemon=True)
 
     def start(self):
+        """Start the pause-watching worker thread."""
         self._thread.start()
 
     def stop(self):
+        """Stop the pause-watching worker thread."""
         self._stop_event.set()
         self._new_token_event.set()
         self._thread.join(timeout=2)
 
     def push(self, token: str):
+        """Add a token to the current sentence buffer if it is new."""
         now = time.time()
         if self._last_token_time is not None:
             self._gap_history.append(now - self._last_token_time)
@@ -219,14 +233,14 @@ class StreamingGlossBuffer:
             self._end_sentence()
 
     def clear(self):
-        """Call once the current sentence has been fully spoken, to start
-        the next one from a clean slate."""
+        """Clear the current sentence state and start the next one fresh."""
         self._tokens = []
         self._gap_history.clear()
         self._last_token_time = None
         self._sentence_started_at = None
 
     def _current_pause_threshold(self) -> float:
+        """Compute the adaptive pause threshold for the current signing pace."""
         if not self._gap_history:
             return self.cfg.base_pause_seconds
         avg_gap = sum(self._gap_history) / len(self._gap_history)
@@ -237,10 +251,12 @@ class StreamingGlossBuffer:
         return self.cfg.base_pause_seconds * factor
 
     def _end_sentence(self):
+        """Signal that the current sentence has ended."""
         self.sentence_state.mark_sentence_ended()
         self.retranslate_slot.put(("sentence_end", None))
 
     def _watch_pauses(self):
+        """Monitor incoming tokens and close the sentence when a pause is detected."""
         while not self._stop_event.is_set():
             try:
                 self._new_token_event.wait(timeout=0.2)
@@ -263,5 +279,5 @@ class StreamingGlossBuffer:
                     or elapsed_since_start >= self.cfg.max_wait_seconds
                 ):
                     self._end_sentence()
-            except Exception:
+            except (RuntimeError, ValueError, TimeoutError):
                 logger.exception("Error in gloss-buffer pause watcher; continuing")

@@ -23,7 +23,10 @@ from tts_engine import TinyTTSSpeaker
 
 
 class ASLSpeechPipeline:
+    """Wire the recognizer, queue, translator, and speaker together."""
+
     def __init__(self, cfg: PipelineConfig):
+        """Initialize all pipeline stages with the provided configuration."""
         self.cfg = cfg
 
         self.retranslate_slot = LatestSlot()
@@ -39,21 +42,24 @@ class ASLSpeechPipeline:
         self.speaker = TinyTTSSpeaker(cfg.tts, self.sentence_state, self.gloss_buffer)
 
     def start(self):
+        """Start all background workers in the pipeline."""
         self.gloss_buffer.start()
         self.translator.start()
         self.speaker.start()
 
     def stop(self):
+        """Stop all background workers in the pipeline."""
         self.gloss_buffer.stop()
         self.translator.stop()
         self.speaker.stop()
 
     @property
     def last_spoken_text(self) -> str:
+        """Expose the most recently spoken sentence text for the UI."""
         return self.speaker.last_spoken_text
 
     def on_frame(self, frame_bgr):
-        """Call this once per captured video frame."""
+        """Process a single camera frame and forward any recognized token."""
         prediction = self.recognizer.process_frame(frame_bgr)
         if prediction is not None and prediction.token is not None:
             self.gloss_buffer.push(prediction.token)

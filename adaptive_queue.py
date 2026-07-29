@@ -28,6 +28,8 @@ from config import AdaptiveQueueConfig
 
 
 class AdaptiveGlossQueue:
+    """Buffer incoming gloss tokens and emit sentence-sized chunks."""
+
     def __init__(
         self, cfg: AdaptiveQueueConfig, output_queue: "queue.Queue[List[str]]"
     ):
@@ -44,9 +46,11 @@ class AdaptiveGlossQueue:
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self):
+        """Start the background worker thread."""
         self._thread.start()
 
     def stop(self):
+        """Stop the worker thread and flush any remaining buffered tokens."""
         self._stop_event.set()
         self._input_queue.put(None)  # unblock the loop
         self._thread.join(timeout=2)
@@ -56,6 +60,7 @@ class AdaptiveGlossQueue:
         self._input_queue.put(token)
 
     def _current_pause_threshold(self) -> float:
+        """Return the adaptive pause threshold for the current signing pace."""
         if not self._gap_history:
             return self.cfg.base_pause_seconds
 
@@ -69,6 +74,7 @@ class AdaptiveGlossQueue:
         return self.cfg.base_pause_seconds * factor
 
     def _flush(self):
+        """Emit the current buffer to the downstream queue."""
         if not self._buffer:
             return
         self.output_queue.put(list(self._buffer))
@@ -76,6 +82,7 @@ class AdaptiveGlossQueue:
         self._buffer_started_at = None
 
     def _run(self):
+        """Watch the input queue and flush buffered tokens on pause or shutdown."""
         while not self._stop_event.is_set():
             timeout = self._current_pause_threshold()
             try:

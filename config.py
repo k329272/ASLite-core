@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ASLConfig:
+    """Configuration for the ASL recognition stage."""
+
     # Path to your OpenVINO IR ASL sign-recognition model
     model_xml: str = "models/asl_recognizer.xml"
     device: str = "CPU"  # "CPU", "GPU", "AUTO", etc.
@@ -38,6 +40,8 @@ class ASLConfig:
 
 @dataclass
 class AdaptiveQueueConfig:
+    """Configuration for the adaptive gloss buffering queue."""
+
     # A run of identical consecutive tokens collapses to one (dedup)
     dedup_repeats: bool = True
 
@@ -65,6 +69,8 @@ class AdaptiveQueueConfig:
 
 @dataclass
 class TranslatorConfig:
+    """Configuration for the translator model."""
+
     model_path: str = (
         "optimized_t5_model"  # the folder saved in your notebook's last cell
     )
@@ -76,6 +82,8 @@ class TranslatorConfig:
 
 @dataclass
 class TTSConfig:
+    """Configuration for the text-to-speech synthesis stage."""
+
     tinytts_checkpoint: str = "models/G.pth"  # TinyTTS pretrained checkpoint
     tinytts_device: str = "cpu"
     tinytts_speaker: str = "MALE"
@@ -93,6 +101,8 @@ class TTSConfig:
 
 @dataclass
 class PipelineConfig:
+    """Top-level configuration for the full sign-to-speech pipeline."""
+
     asl: ASLConfig = field(default_factory=ASLConfig)
     queue: AdaptiveQueueConfig = field(default_factory=AdaptiveQueueConfig)
     translator: TranslatorConfig = field(default_factory=TranslatorConfig)

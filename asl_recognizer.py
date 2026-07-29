@@ -13,15 +13,33 @@ assumes a single input / single output classification model; adjust
 `_infer` if your model's signature differs (e.g. multiple inputs).
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import time
 from dataclasses import dataclass
 from typing import Optional
 
-import numpy as np
-import cv2
-import openvino as ov
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - optional runtime dependency
+    np = None  # type: ignore[assignment]
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover - optional runtime dependency
+    cv2 = None  # type: ignore[assignment]
+
+try:
+    import openvino as ov
+except ImportError:  # pragma: no cover - optional runtime dependency
+    ov = None  # type: ignore[assignment]
+
+try:
+    import mediapipe as mp
+except ImportError:  # pragma: no cover - optional runtime dependency
+    mp = None  # type: ignore[assignment]
 
 from config import ASLConfig
 
@@ -30,12 +48,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ASLPrediction:
+    """Container for one inference result and its confidence."""
+
     token: Optional[str]  # gloss token, or None if below confidence threshold
     confidence: float
     timestamp: float
 
 
 class ASLRecognizer:
+    """Run per-frame sign classification with a compiled OpenVINO model."""
+
     def __init__(self, cfg: ASLConfig):
         self.cfg = cfg
         self._min_interval = 1.0 / cfg.inference_fps
@@ -48,7 +70,12 @@ class ASLRecognizer:
         self._pending_count = 0
         self._confirmed_label: Optional[str] = None
 
-        with open(cfg.labels_path, "r") as f:
+        if np is None or cv2 is None or ov is None:
+            raise RuntimeError(
+                "ASL recognizer requires numpy, opencv-python, and openvino"
+            )
+
+        with open(cfg.labels_path, "r", encoding="utf-8") as f:
             self.labels = json.load(f)
 
         core = ov.Core()
@@ -58,7 +85,8 @@ class ASLRecognizer:
         self.input_layer = self.compiled_model.input(0)
 
         if cfg.input_mode == "landmarks":
-            import mediapipe as mp
+            if mp is None:
+                raise RuntimeError("mediapipe is required for landmark input mode")
 
             self._mp_hands = mp.solutions.hands.Hands(
                 static_image_mode=False,
@@ -157,7 +185,7 @@ class ASLRecognizer:
             else:
                 tensor = self._prep_frame(frame_bgr)
                 raw = self._infer(tensor)
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, AttributeError):
             logger.exception("ASL inference failed on this frame; skipping it")
             return None
 

@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class GlossTranslator:
+    """Continuously re-translate the latest gloss buffer with a sequence model."""
+
     def __init__(
         self,
         cfg: TranslatorConfig,
@@ -42,14 +44,17 @@ class GlossTranslator:
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self):
+        """Start the background translation worker."""
         self._thread.start()
 
     def stop(self):
+        """Stop the background translation worker."""
         self._stop_event.set()
         self.retranslate_slot.put(("stop", None))
         self._thread.join(timeout=5)
 
     def _forced_decoder_ids(self, locked_words: List[str]) -> Optional[torch.Tensor]:
+        """Build decoder-input IDs that force the model to preserve the locked prefix."""
         if not locked_words:
             return None
         text = " ".join(locked_words)
@@ -58,6 +63,7 @@ class GlossTranslator:
         return torch.tensor([[decoder_start] + ids], device=self.cfg.device)
 
     def _retranslate(self, gloss_tokens: List[str]):
+        """Translate the current gloss buffer while keeping spoken words fixed."""
         if not gloss_tokens:
             return
 
@@ -73,9 +79,10 @@ class GlossTranslator:
             return_tensors="pt",
         ).to(self.cfg.device)
 
-        gen_kwargs = dict(
-            max_new_tokens=self.cfg.max_new_tokens, num_beams=self.cfg.num_beams
-        )
+        gen_kwargs = {
+            "max_new_tokens": self.cfg.max_new_tokens,
+            "num_beams": self.cfg.num_beams,
+        }
         forced_ids = self._forced_decoder_ids(locked_words)
         if forced_ids is not None:
             gen_kwargs["decoder_input_ids"] = forced_ids
@@ -111,5 +118,5 @@ class GlossTranslator:
                     # candidate. The speaker finishes voicing it and triggers
                     # the reset once every word has been spoken.
                     continue
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, AttributeError):
                 logger.exception("Retranslation failed; keeping previous candidate")

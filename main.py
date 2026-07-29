@@ -21,6 +21,7 @@ logging.basicConfig(
 
 
 def main():
+    """Launch the webcam-based ASL-to-speech demo."""
     cfg = PipelineConfig()
     pipeline = ASLSpeechPipeline(cfg)
     pipeline.start()
@@ -40,7 +41,7 @@ def main():
 
             try:
                 prediction = pipeline.on_frame(frame)
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, AttributeError):
                 logging.getLogger(__name__).exception(
                     "Error processing frame; skipping it"
                 )

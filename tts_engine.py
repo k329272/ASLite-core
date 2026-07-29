@@ -38,10 +38,25 @@ import threading
 import time
 from typing import Optional, Tuple
 
-import numpy as np
-import soundfile as sf
-import sounddevice as sd
-from tiny_tts import TinyTTS as _TinyTTSEngine
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - optional runtime dependency
+    np = None  # type: ignore[assignment]
+
+try:
+    import soundfile as sf
+except ImportError:  # pragma: no cover - optional runtime dependency
+    sf = None  # type: ignore[assignment]
+
+try:
+    import sounddevice as sd
+except ImportError:  # pragma: no cover - optional runtime dependency
+    sd = None  # type: ignore[assignment]
+
+try:
+    from tiny_tts import TinyTTS as _TinyTTSEngine
+except ImportError:  # pragma: no cover - optional runtime dependency
+    _TinyTTSEngine = None  # type: ignore[assignment]
 
 from config import TTSConfig
 from streaming_state import SharedSentenceState, StreamingGlossBuffer
@@ -54,6 +69,8 @@ _SENTENCE_DONE = (
 
 
 class TinyTTSSpeaker:
+    """Speak translated words incrementally using TinyTTS."""
+
     def __init__(
         self,
         cfg: TTSConfig,
@@ -63,6 +80,11 @@ class TinyTTSSpeaker:
         self.cfg = cfg
         self.sentence_state = sentence_state
         self.gloss_buffer = gloss_buffer
+
+        if np is None or sf is None or sd is None or _TinyTTSEngine is None:
+            raise RuntimeError(
+                "TinyTTS support requires numpy, soundfile, sounddevice, and tiny-tts"
+            )
 
         self.engine = _TinyTTSEngine(
             checkpoint=cfg.tinytts_checkpoint,
@@ -80,16 +102,19 @@ class TinyTTSSpeaker:
         )
 
     def start(self):
+        """Start the decision and playback worker threads."""
         self._decision_thread.start()
         self._playback_thread.start()
 
     def stop(self):
+        """Stop the decision and playback worker threads."""
         self._stop_event.set()
         self._play_queue.put(None)  # unblock playback thread if it's waiting
         self._decision_thread.join(timeout=5)
         self._playback_thread.join(timeout=5)
 
     def _synthesize(self, word: str) -> Optional[Tuple[np.ndarray, int]]:
+        """Synthesize one word to an in-memory WAV buffer and return it."""
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 wav_path = os.path.join(tmp_dir, "word.wav")
@@ -101,11 +126,12 @@ class TinyTTSSpeaker:
                 )
                 audio, sample_rate = sf.read(wav_path, dtype="float32")
                 return audio, sample_rate
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, AttributeError):
             logger.exception("TinyTTS synthesis failed for word %r; skipping it", word)
             return None
 
     def _decision_loop(self):
+        """Decide which word to lock and queue for playback next."""
         while not self._stop_event.is_set():
             try:
                 word = self.sentence_state.get_stable_next_word(
@@ -135,11 +161,12 @@ class TinyTTSSpeaker:
                     continue
 
                 time.sleep(0.02)  # nothing new is stable enough to commit to yet
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, AttributeError):
                 logger.exception("Error in TTS decision loop; continuing")
                 time.sleep(0.1)
 
     def _playback_loop(self):
+        """Play queued audio words in order and reset state when a sentence drains."""
         while not self._stop_event.is_set():
             item = self._play_queue.get()
             if item is None:
@@ -151,9 +178,9 @@ class TinyTTSSpeaker:
                     self.last_spoken_text = ""
                     continue
 
-                word, audio, sample_rate = item
+                _, audio, sample_rate = item
                 sd.play(audio, sample_rate)
                 sd.wait()
                 self.last_spoken_text = " ".join(self.sentence_state.get_locked_words())
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, AttributeError):
                 logger.exception("Error in TTS playback loop; continuing")
