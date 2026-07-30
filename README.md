@@ -1,3 +1,12 @@
+---
+title: ASLite Core
+emoji: hands
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+---
+
 # ASL → Speech
 
 A real-time demo that turns sign language into spoken words. Point a webcam at a signer, and the app will recognize signs, build a sentence, and speak it out loud.
@@ -87,3 +96,5 @@ These options are meant to make the app more reliable for your setup and speakin
 - `asl_recognizer.py` — handles sign recognition
 - `translator.py` — turns recognized signs into spoken text
 - `tts_engine.py` — produces speech output
+
+
