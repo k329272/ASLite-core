@@ -30,12 +30,14 @@ actual Python API and adjust `_TinyTTSEngine(...)` / `.speak(...)` kwargs
 if they differ in your installed version.
 """
 
+import io
 import logging
 import os
 import queue
 import tempfile
 import threading
 import time
+import wave
 from typing import Optional, Tuple
 
 try:
@@ -92,6 +94,9 @@ class TinyTTSSpeaker:
         )
 
         self.last_spoken_text = ""  # readable by other threads for UI display only
+        self.last_audio_payload = b""
+        self.last_audio_sample_rate = 16000
+        self.last_audio_word = ""
         self._play_queue: "queue.Queue" = queue.Queue()
         self._stop_event = threading.Event()
         self._decision_thread = threading.Thread(
@@ -130,6 +135,33 @@ class TinyTTSSpeaker:
             logger.exception("TinyTTS synthesis failed for word %r; skipping it", word)
             return None
 
+    def _to_wav_bytes(self, audio: np.ndarray, sample_rate: int) -> bytes:
+        """Encode audio data as a WAV payload for streaming to clients."""
+        if audio is None or np is None:
+            return b""
+
+        audio_arr = np.asarray(audio)
+        if audio_arr.ndim == 2:
+            channels = audio_arr.shape[1]
+            samples = audio_arr
+        else:
+            channels = 1
+            samples = audio_arr.reshape(-1, 1)
+
+        if samples.dtype.kind in {"f", "c"}:
+            samples = np.clip(samples, -1.0, 1.0)
+            samples = (samples * 32767).astype(np.int16)
+        elif samples.dtype != np.int16:
+            samples = samples.astype(np.int16)
+
+        with io.BytesIO() as buf:
+            with wave.open(buf, "wb") as wav_file:
+                wav_file.setnchannels(channels)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(int(sample_rate))
+                wav_file.writeframes(samples.tobytes())
+            return buf.getvalue()
+
     def _decision_loop(self):
         """Decide which word to lock and queue for playback next."""
         while not self._stop_event.is_set():
@@ -144,6 +176,9 @@ class TinyTTSSpeaker:
                     synth_result = self._synthesize(locked)
                     if synth_result is not None:
                         audio, sample_rate = synth_result
+                        self.last_audio_word = locked
+                        self.last_audio_sample_rate = int(sample_rate)
+                        self.last_audio_payload = self._to_wav_bytes(audio, sample_rate)
                         self._play_queue.put((locked, audio, sample_rate))
                     continue
 

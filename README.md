@@ -39,13 +39,21 @@ You will need:
    - the confidence threshold for recognition
    - the speech and sentence timing behavior
 
-4. Start the app:
+4. Start the webcam demo:
 
    ```bash
    python main.py
    ```
 
 5. Press `q` to exit the program.
+
+6. Or start the live server that exposes the latest transcript and synthesized audio over HTTP:
+
+   ```bash
+   python server.py
+   ```
+
+   Open http://localhost:8000/ to receive JSON containing the latest `text`, `audio_base64`, and `audio_sample_rate` values.
 
 ## Using the app
 

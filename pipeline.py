@@ -58,6 +58,16 @@ class ASLSpeechPipeline:
         """Expose the most recently spoken sentence text for the UI."""
         return self.speaker.last_spoken_text
 
+    @property
+    def last_audio_payload(self) -> bytes:
+        """Expose the most recently synthesized audio payload for streaming."""
+        return self.speaker.last_audio_payload
+
+    @property
+    def last_audio_sample_rate(self) -> int:
+        """Expose the sample rate for the most recently synthesized audio."""
+        return self.speaker.last_audio_sample_rate
+
     def on_frame(self, frame_bgr):
         """Process a single camera frame and forward any recognized token."""
         prediction = self.recognizer.process_frame(frame_bgr)

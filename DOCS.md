@@ -10,9 +10,9 @@ camera frame
 ASLRecognizer (OpenVINO)         one gloss token per confident sign
    │
    ▼
-StreamingGlossBuffer              accumulates tokens for the current sentence,
-   │                              detects a pause (adaptive to signing speed) to
-   │                              mark the sentence as ended
+StreamingGlossBuffer             accumulates tokens for the current sentence,
+   │                             detects a pause (adaptive to signing speed) to
+   │                             mark the sentence as ended
    ▼
 GlossTranslator (T5, from your notebook)
    │        re-translates the ENTIRE buffer on every new token, but is forced
@@ -105,6 +105,17 @@ python main.py
 
 Press `q` to quit. On-screen you'll see the current recognized sign and the
 most recently spoken sentence.
+
+### Live server
+
+```bash
+python server.py
+```
+
+The server listens on port `8000` and serves a JSON payload at `/` with:
+- `text`: the latest recognized or spoken text
+- `audio_base64`: the latest synthesized audio as base64-encoded WAV data
+- `audio_sample_rate`: the sample rate for that audio chunk
 
 ## Tuning the sentence boundary
 
