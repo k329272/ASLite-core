@@ -38,10 +38,11 @@ You will need:
    pip install -r requirements.txt
    ```
 
-2. Place your models in the expected locations.
-   - The ASL model should be available as the OpenVINO `.xml` and `.bin` files configured in the settings.
-   - The translation model should be placed in the folder referenced by the configuration.
-   - The TinyTTS checkpoint should be available at the path configured for speech output.
+2. Download the models:
+   - linux:
+      ```bash
+      bash download
+      ```
 
 3. Review the settings in `config.py` if you want to change:
    - the model paths
