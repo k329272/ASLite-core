@@ -1,72 +1,35 @@
 #!/usr/bin/env bash
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    unzip models/optimized_model.zip -d models/
+elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    tar -xf models/optimized_model.zip -C models/
+else
+    echo "unknown os"
+
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
-MODELS_DIR="$SCRIPT_DIR/models"
-mkdir -p "$MODELS_DIR"
-
-ASL_XML_URL="${ASL_XML_URL:-${1:-}}"
-ASL_BIN_URL="${ASL_BIN_URL:-${2:-}}"
-ASL_LABELS_URL="${ASL_LABELS_URL:-${3:-}}"
-T5_ZIP_URL="${T5_ZIP_URL:-${4:-}}"
-TINYTTS_CHECKPOINT_URL="${TINYTTS_CHECKPOINT_URL:-${5:-}}"
-
-if [[ -z "$ASL_XML_URL" && -z "$ASL_BIN_URL" && -z "$ASL_LABELS_URL" && -z "$T5_ZIP_URL" && -z "$TINYTTS_CHECKPOINT_URL" ]]; then
-  echo "Usage: ./download <asl_xml_url> <asl_bin_url> <labels_url> <t5_zip_url> <tinytts_checkpoint_url>"
-  echo "Or export these environment variables before running:"
-  echo "  ASL_XML_URL ASL_BIN_URL ASL_LABELS_URL T5_ZIP_URL TINYTTS_CHECKPOINT_URL"
-  exit 1
-fi
-
-download_file() {
-  local url="$1"
-  local dest="$2"
-
-  if [[ -z "$url" ]]; then
-    echo "Skipping $dest because no URL was provided."
-    return 0
-  fi
-
-  echo "Downloading $dest"
-  mkdir -p "$(dirname "$dest")"
-
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$dest"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "$dest" "$url"
-  else
-    echo "Either curl or wget is required to download files." >&2
+if command -v curl &> /dev/null; then
+    curl -L -o models/G.pth https://huggingface.co
+elif command -v huggingface-cli &> /dev/null; then
+    huggingface-cli download backtracking/tiny-tts model.pth --local-dir models
+    mv models/model.pth models/G.pth
+else
+    echo "install curl or huggingface-cli"
     exit 1
-  fi
-}
-
-ASL_XML_DEST="$MODELS_DIR/asl_recognizer.xml"
-ASL_BIN_DEST="$MODELS_DIR/asl_recognizer.bin"
-ASL_LABELS_DEST="$MODELS_DIR/gloss_labels.json"
-T5_ZIP_DEST="$MODELS_DIR/optimized_t5_model.zip"
-TINYTTS_CHECKPOINT_DEST="$MODELS_DIR/G.pth"
-
-# Download the ASL recognition assets.
-download_file "$ASL_XML_URL" "$ASL_XML_DEST"
-download_file "$ASL_BIN_URL" "$ASL_BIN_DEST"
-download_file "$ASL_LABELS_URL" "$ASL_LABELS_DEST"
-
-# Download and unpack the T5 model archive.
-if [[ -n "$T5_ZIP_URL" ]]; then
-  download_file "$T5_ZIP_URL" "$T5_ZIP_DEST"
-  echo "Unpacking $T5_ZIP_DEST"
-  rm -rf "$MODELS_DIR/optimized_t5_model" "$SCRIPT_DIR/optimized_t5_model"
-  mkdir -p "$MODELS_DIR/optimized_t5_model"
-  unzip -q "$T5_ZIP_DEST" -d "$MODELS_DIR/optimized_t5_model"
-  cp -R "$MODELS_DIR/optimized_t5_model" "$SCRIPT_DIR/optimized_t5_model"
 fi
 
-# Download the TinyTTS checkpoint.
-download_file "$TINYTTS_CHECKPOINT_URL" "$TINYTTS_CHECKPOINT_DEST"
+mkdir -p models
 
-echo "Model downloads finished."
-echo "ASL assets: $ASL_XML_DEST, $ASL_BIN_DEST, $ASL_LABELS_DEST"
-echo "T5 model: $SCRIPT_DIR/optimized_t5_model"
-echo "TinyTTS checkpoint: $TINYTTS_CHECKPOINT_DEST"
+TEMP_DIR=$(mktemp -d)
+cd "$TEMP_DIR"
+
+git clone --depth 1 https://github.com
+cd open_model_zoo/tools/downloader
+pip install --user -r requirements.in
+python3 downloader.py --name asl-recognition-0004
+MODEL_SRC_XML=$(find . -type f -name "asl-recognition-0004.xml" | head -n 1)
+MODEL_SRC_BIN=$(find . -type f -name "asl-recognition-0004.bin" | head -n 1)
+cp "$MODEL_SRC_XML" "$OLDPWD/models/asl_recognizer.xml"
+cp "$MODEL_SRC_BIN" "$OLDPWD/models/asl_recognizer.bin"
+curl -L https://githubusercontent.com -o "$OLDPWD/models/gloss_labels.json"
+cd "$OLDPWD"
+rm -rf "$TEMP_DIR"
