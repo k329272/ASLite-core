@@ -202,5 +202,3 @@ class ASLRecognizer:
             return None
 
         return self._stabilize(raw)
-
-

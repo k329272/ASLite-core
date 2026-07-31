@@ -151,7 +151,9 @@ def health():
 def recognize_frame(request: FrameRequest):
     global _latest
     recognizer = get_recognizer()
-    frames = request.frames_base64 or ([request.image_base64] if request.image_base64 else [])
+    frames = request.frames_base64 or (
+        [request.image_base64] if request.image_base64 else []
+    )
     if not frames:
         raise HTTPException(status_code=400, detail="No frame payload provided")
 

@@ -71,9 +71,7 @@ class AdaptiveQueueConfig:
 class TranslatorConfig:
     """Configuration for the translator model."""
 
-    model_path: str = (
-        "models"  # local folder unpacked by the download script
-    )
+    model_path: str = "models"  # local folder unpacked by the download script
     device: str = "cpu"  # quantized model was exported for CPU
     max_input_length: int = 64
     max_new_tokens: int = 64
@@ -107,5 +105,3 @@ class PipelineConfig:
     queue: AdaptiveQueueConfig = field(default_factory=AdaptiveQueueConfig)
     translator: TranslatorConfig = field(default_factory=TranslatorConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
-
-

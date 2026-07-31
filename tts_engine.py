@@ -85,13 +85,21 @@ class KittenTTSSpeaker:
         else:
             try:
                 self.engine = _KittenTTSEngine(
-                    getattr(self.cfg, "kittentts_model", getattr(self.cfg, "kitttentts_model", "")),
+                    getattr(
+                        self.cfg,
+                        "kittentts_model",
+                        getattr(self.cfg, "kitttentts_model", ""),
+                    ),
                     cache_dir=getattr(self.cfg, "kittentts_cache_dir", None),
                 )
             except TypeError:
                 try:
                     self.engine = _KittenTTSEngine(
-                        getattr(self.cfg, "kittentts_model", getattr(self.cfg, "kitttentts_model", ""))
+                        getattr(
+                            self.cfg,
+                            "kittentts_model",
+                            getattr(self.cfg, "kitttentts_model", ""),
+                        )
                     )
                 except Exception as exc:  # pragma: no cover - runtime fallback path
                     logger.warning(
@@ -156,8 +164,16 @@ class KittenTTSSpeaker:
         try:
             audio = self.engine.generate(
                 word,
-                voice=getattr(self.cfg, "kittentts_voice", getattr(self.cfg, "kitttentts_voice", "Jasper")),
-                speed=getattr(self.cfg, "kittentts_speed", getattr(self.cfg, "kitttentts_speed", 1.0)),
+                voice=getattr(
+                    self.cfg,
+                    "kittentts_voice",
+                    getattr(self.cfg, "kitttentts_voice", "Jasper"),
+                ),
+                speed=getattr(
+                    self.cfg,
+                    "kittentts_speed",
+                    getattr(self.cfg, "kitttentts_speed", 1.0),
+                ),
                 clean_text=True,
             )
             audio_arr = np.asarray(audio, dtype=np.float32)

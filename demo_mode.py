@@ -9,7 +9,9 @@ from config import PipelineConfig
 from tts_engine import KittenTTSSpeaker
 
 
-def _write_caption_video(input_path: str, output_path: str, caption: str, audio_path: Optional[str] = None) -> None:
+def _write_caption_video(
+    input_path: str, output_path: str, caption: str, audio_path: Optional[str] = None
+) -> None:
     """Render a caption and optional audio onto a copied video file using OpenCV."""
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input video not found: {input_path}")
