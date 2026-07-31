@@ -69,7 +69,12 @@ class LiveRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format: str, *args) -> None:  # noqa: A003
-        logger.debug("%s - - [%s] %s", self.address_string(), self.log_date_time_string(), format % args)
+        logger.debug(
+            "%s - - [%s] %s",
+            self.address_string(),
+            self.log_date_time_string(),
+            format % args,
+        )
 
 
 class LiveHTTPServer(ThreadingHTTPServer):
@@ -125,7 +130,12 @@ def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
             if prediction is not None and prediction.token is not None:
                 text = prediction.token
             if text:
-                state.update(text, pipeline.last_audio_payload, pipeline.last_audio_sample_rate, frame)
+                state.update(
+                    text,
+                    pipeline.last_audio_payload,
+                    pipeline.last_audio_sample_rate,
+                    frame,
+                )
             else:
                 state.update(text, b"", 16000, frame)
 

@@ -1,9 +1,6 @@
 """
-Word-by-word speech synthesis using TinyTTS -- a ~1.6M-parameter ONNX
-neural TTS model (github.com/tronghieuit/tiny-tts, `pip install tiny-tts`),
-chosen for "lightweight NN-based TTS" since it's a genuine small neural
-model rather than a rule-based engine, but still runs comfortably on CPU
-with no GPU requirement.
+Word-by-word speech synthesis using KittenTTS, a lightweight ONNX-based
+text-to-speech engine designed to run comfortably on CPU.
 
 Two threads, pipelined:
   - _decision_loop: decides which word to commit to next (requiring it to
@@ -21,13 +18,6 @@ Locking happens the moment a word is committed to the playback queue (not
 the exact instant its audio starts), since from that point on it's
 guaranteed to be spoken next in order and the translator must already
 treat it as fixed.
-
-NOTE: tiny-tts is a small, actively-changing project. The constructor/
-method signature below is inferred from its published CLI
-(`tiny-tts --text ... --checkpoint G.pth --speaker MALE --speed 1.0 --device cpu`)
-and README examples. Check `pip show tiny-tts` / the installed package's
-actual Python API and adjust `_TinyTTSEngine(...)` / `.speak(...)` kwargs
-if they differ in your installed version.
 """
 
 import io
@@ -56,9 +46,9 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     sd = None  # type: ignore[assignment]
 
 try:
-    from tiny_tts import TinyTTS as _TinyTTSEngine
+    from kittentts import KittenTTS as _KittenTTSEngine
 except ImportError:  # pragma: no cover - optional runtime dependency
-    _TinyTTSEngine = None  # type: ignore[assignment]
+    _KittenTTSEngine = None  # type: ignore[assignment]
 
 from config import TTSConfig
 from streaming_state import SharedSentenceState, StreamingGlossBuffer
@@ -70,8 +60,8 @@ _SENTENCE_DONE = (
 )  # sentinel: everything for the current sentence has been queued
 
 
-class TinyTTSSpeaker:
-    """Speak translated words incrementally using TinyTTS."""
+class KittenTTSSpeaker:
+    """Speak translated words incrementally using KittenTTS."""
 
     def __init__(
         self,
@@ -83,14 +73,14 @@ class TinyTTSSpeaker:
         self.sentence_state = sentence_state
         self.gloss_buffer = gloss_buffer
 
-        if np is None or sf is None or sd is None or _TinyTTSEngine is None:
+        if np is None or sf is None or sd is None or _KittenTTSEngine is None:
             raise RuntimeError(
-                "TinyTTS support requires numpy, soundfile, sounddevice, and tiny-tts"
+                "KittenTTS support requires numpy, soundfile, sounddevice, and kittentts"
             )
 
-        self.engine = _TinyTTSEngine(
-            checkpoint=cfg.tinytts_checkpoint,
-            device=cfg.tinytts_device,
+        self.engine = _KittenTTSEngine(
+            self.cfg.kittentts_model,
+            cache_dir=self.cfg.kittentts_cache_dir,
         )
 
         self.last_spoken_text = ""  # readable by other threads for UI display only
@@ -119,20 +109,20 @@ class TinyTTSSpeaker:
         self._playback_thread.join(timeout=5)
 
     def _synthesize(self, word: str) -> Optional[Tuple[np.ndarray, int]]:
-        """Synthesize one word to an in-memory WAV buffer and return it."""
+        """Synthesize one word to an in-memory audio buffer and return it."""
         try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                wav_path = os.path.join(tmp_dir, "word.wav")
-                self.engine.speak(
-                    word,
-                    output_path=wav_path,
-                    speaker=self.cfg.tinytts_speaker,
-                    speed=self.cfg.tinytts_speed,
-                )
-                audio, sample_rate = sf.read(wav_path, dtype="float32")
-                return audio, sample_rate
+            audio = self.engine.generate(
+                word,
+                voice=self.cfg.kittentts_voice,
+                speed=self.cfg.kittentts_speed,
+                clean_text=True,
+            )
+            audio_arr = np.asarray(audio, dtype=np.float32)
+            return audio_arr, 24000
         except (RuntimeError, ValueError, TypeError, AttributeError):
-            logger.exception("TinyTTS synthesis failed for word %r; skipping it", word)
+            logger.exception(
+                "KittenTTS synthesis failed for word %r; skipping it", word
+            )
             return None
 
     def _to_wav_bytes(self, audio: np.ndarray, sample_rate: int) -> bytes:
@@ -219,3 +209,6 @@ class TinyTTSSpeaker:
                 self.last_spoken_text = " ".join(self.sentence_state.get_locked_words())
             except (RuntimeError, ValueError, TypeError, AttributeError):
                 logger.exception("Error in TTS playback loop; continuing")
+
+
+TinyTTSSpeaker = KittenTTSSpeaker

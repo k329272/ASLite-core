@@ -84,10 +84,10 @@ class TranslatorConfig:
 class TTSConfig:
     """Configuration for the text-to-speech synthesis stage."""
 
-    tinytts_checkpoint: str = "models/G.pth"  # TinyTTS pretrained checkpoint
-    tinytts_device: str = "cpu"
-    tinytts_speaker: str = "MALE"
-    tinytts_speed: float = 1.0
+    kittentts_model: str = "KittenML/kitten-tts-nano-0.8"
+    kittentts_voice: str = "Jasper"
+    kittentts_speed: float = 1.0
+    kittentts_cache_dir: str | None = None
 
     # A candidate tail word must come back unchanged across this many
     # consecutive re-translations before it's locked & spoken. Guards

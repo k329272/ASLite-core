@@ -6,7 +6,7 @@ Wires the stages together:
       -> StreamingGlossBuffer                   [accumulates tokens, detects sentence pauses]
       -> GlossTranslator (your fine-tuned T5)   [continuously re-translates the whole buffer,
                                                   forced to keep already-spoken words fixed]
-      -> TinyTTSSpeaker                         [speaks the next unspoken word, locking it]
+      -> KittenTTSSpeaker                       [speaks the next unspoken word, locking it]
 
 The translator and speaker race against each other on purpose: T5 keeps
 refining the *unspoken tail* of the sentence as new signs arrive, while TTS
@@ -19,7 +19,7 @@ from config import PipelineConfig
 from asl_recognizer import ASLRecognizer
 from streaming_state import LatestSlot, SharedSentenceState, StreamingGlossBuffer
 from translator import GlossTranslator
-from tts_engine import TinyTTSSpeaker
+from tts_engine import KittenTTSSpeaker
 
 
 class ASLSpeechPipeline:
@@ -39,7 +39,7 @@ class ASLSpeechPipeline:
         self.translator = GlossTranslator(
             cfg.translator, self.retranslate_slot, self.sentence_state
         )
-        self.speaker = TinyTTSSpeaker(cfg.tts, self.sentence_state, self.gloss_buffer)
+        self.speaker = KittenTTSSpeaker(cfg.tts, self.sentence_state, self.gloss_buffer)
 
     def start(self):
         """Start all background workers in the pipeline."""

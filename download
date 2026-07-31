@@ -6,17 +6,6 @@ elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
 else
     echo "unknown os"
 
-set -euo pipefail
-if command -v curl &> /dev/null; then
-    curl -L -o models/G.pth https://huggingface.co
-elif command -v huggingface-cli &> /dev/null; then
-    huggingface-cli download backtracking/tiny-tts model.pth --local-dir models
-    mv models/model.pth models/G.pth
-else
-    echo "install curl or huggingface-cli"
-    exit 1
-fi
-
 mkdir -p models
 
 TEMP_DIR=$(mktemp -d)
