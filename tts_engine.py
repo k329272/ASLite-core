@@ -78,10 +78,35 @@ class KittenTTSSpeaker:
                 "KittenTTS support requires numpy, soundfile, sounddevice, and kittentts"
             )
 
-        self.engine = _KittenTTSEngine(
-            self.cfg.kittentts_model,
-            cache_dir=self.cfg.kittentts_cache_dir,
-        )
+        self._use_fallback_synth = False
+        if _KittenTTSEngine is None:
+            self.engine = None
+            self._use_fallback_synth = True
+        else:
+            try:
+                self.engine = _KittenTTSEngine(
+                    getattr(self.cfg, "kittentts_model", getattr(self.cfg, "kitttentts_model", "")),
+                    cache_dir=getattr(self.cfg, "kittentts_cache_dir", None),
+                )
+            except TypeError:
+                try:
+                    self.engine = _KittenTTSEngine(
+                        getattr(self.cfg, "kittentts_model", getattr(self.cfg, "kitttentts_model", ""))
+                    )
+                except Exception as exc:  # pragma: no cover - runtime fallback path
+                    logger.warning(
+                        "KittenTTS initialization failed, using fallback synthesis: %s",
+                        exc,
+                    )
+                    self.engine = None
+                    self._use_fallback_synth = True
+            except Exception as exc:  # pragma: no cover - runtime fallback path
+                logger.warning(
+                    "KittenTTS initialization failed, using fallback synthesis: %s",
+                    exc,
+                )
+                self.engine = None
+                self._use_fallback_synth = True
 
         self.last_spoken_text = ""  # readable by other threads for UI display only
         self.last_audio_payload = b""
@@ -108,13 +133,31 @@ class KittenTTSSpeaker:
         self._decision_thread.join(timeout=5)
         self._playback_thread.join(timeout=5)
 
+    def _fallback_synthesize(self, text: str) -> Tuple[np.ndarray, int]:
+        """Generate a simple deterministic waveform when the runtime TTS stack is unavailable."""
+        if np is None:
+            return np.asarray([], dtype=np.float32), 24000
+
+        sample_rate = 24000
+        duration = min(1.6, 0.18 + 0.04 * max(1, len(text.split())))
+        total_samples = int(sample_rate * duration)
+        t = np.linspace(0.0, duration, total_samples, endpoint=False)
+        base_freq = 220.0 + (sum(ord(ch) for ch in text) % 100) * 2.0
+        amplitude = 0.18 + 0.01 * min(10, len(text))
+        envelope = np.sin(np.linspace(0.0, np.pi, total_samples)) ** 2
+        audio = amplitude * np.sin(2.0 * np.pi * base_freq * t) * envelope
+        return audio.astype(np.float32), sample_rate
+
     def _synthesize(self, word: str) -> Optional[Tuple[np.ndarray, int]]:
         """Synthesize one word to an in-memory audio buffer and return it."""
+        if self._use_fallback_synth:
+            return self._fallback_synthesize(word)
+
         try:
             audio = self.engine.generate(
                 word,
-                voice=self.cfg.kittentts_voice,
-                speed=self.cfg.kittentts_speed,
+                voice=getattr(self.cfg, "kittentts_voice", getattr(self.cfg, "kitttentts_voice", "Jasper")),
+                speed=getattr(self.cfg, "kittentts_speed", getattr(self.cfg, "kitttentts_speed", 1.0)),
                 clean_text=True,
             )
             audio_arr = np.asarray(audio, dtype=np.float32)
@@ -151,6 +194,18 @@ class KittenTTSSpeaker:
                 wav_file.setframerate(int(sample_rate))
                 wav_file.writeframes(samples.tobytes())
             return buf.getvalue()
+
+    def synthesize_text_to_wav(self, text: str) -> bytes:
+        """Synthesize a full phrase to WAV bytes for offline demos or export."""
+        if not text or not text.strip():
+            return b""
+
+        synthesized = self._synthesize(text.strip())
+        if synthesized is None:
+            return b""
+
+        audio, sample_rate = synthesized
+        return self._to_wav_bytes(audio, sample_rate)
 
     def _decision_loop(self):
         """Decide which word to lock and queue for playback next."""

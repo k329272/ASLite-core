@@ -30,3 +30,19 @@ def test_synthesize_uses_kitten_tts_generate():
     assert sample_rate == 24000
     assert np.array_equal(audio, np.asarray([0.1, -0.2, 0.3], dtype=np.float32))
     assert speaker.engine.calls == [("hello", "Jasper", 1.2, True)]
+
+
+def test_synthesize_text_to_wav_uses_phrase_level_generation():
+    speaker = object.__new__(KittenTTSSpeaker)
+    speaker.cfg = SimpleNamespace(
+        kitttentts_model="KittenML/kitten-tts-nano-0.8",
+        kitttentts_voice="Jasper",
+        kitttentts_speed=1.2,
+        min_word_stability=2,
+    )
+    speaker.engine = DummyEngine()
+
+    payload = speaker.synthesize_text_to_wav("hello world")
+
+    assert payload.startswith(b"RIFF")
+    assert speaker.engine.calls == [("hello world", "Jasper", 1.2, True)]

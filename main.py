@@ -3,15 +3,18 @@ Real-time ASL -> speech demo.
 
 Usage:
     python main.py
+    python main.py --demo-video path/to/input.mp4 --demo-output path/to/output.mp4 --demo-text "Hello world"
 
-Press 'q' to quit.
+Press 'q' to quit in webcam mode.
 """
 
+import argparse
 import logging
 
 import cv2
 
 from config import PipelineConfig
+from demo_mode import run_video_demo
 from pipeline import ASLSpeechPipeline
 
 logging.basicConfig(
@@ -21,7 +24,33 @@ logging.basicConfig(
 
 
 def main():
-    """Launch the webcam-based ASL-to-speech demo."""
+    """Launch either the webcam demo or the video demo export workflow."""
+    parser = argparse.ArgumentParser(description="ASL speech demo")
+    parser.add_argument("--demo-video", help="Input video file for the demo export")
+    parser.add_argument("--demo-output", help="Output video file for the demo export")
+    parser.add_argument(
+        "--demo-text",
+        help="Text to synthesize for the video-demo export",
+        default="",
+    )
+    parser.add_argument(
+        "--demo-caption",
+        help="Caption text to render over the exported video",
+        default="",
+    )
+    args = parser.parse_args()
+
+    if args.demo_video or args.demo_output:
+        if not args.demo_video or not args.demo_output:
+            raise ValueError("Both --demo-video and --demo-output are required")
+        run_video_demo(
+            args.demo_video,
+            args.demo_output,
+            args.demo_text or args.demo_caption or "Demo mode",
+            args.demo_caption or args.demo_text or "Demo mode",
+        )
+        return
+
     cfg = PipelineConfig()
     pipeline = ASLSpeechPipeline(cfg)
     pipeline.start()

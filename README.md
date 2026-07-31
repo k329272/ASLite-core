@@ -57,7 +57,15 @@ You will need:
 
 5. Press `q` to exit the program.
 
-6. Or start the live server that exposes the latest transcript and synthesized audio over HTTP:
+6. Create a video demo that replaces the original audio with TTS output and adds captions:
+
+   ```bash
+   python main.py --demo-video path/to/input.mp4 --demo-output path/to/output.mp4 --demo-text "Hello from ASLite" --demo-caption "Hello from ASLite"
+   ```
+
+   The export uses ffmpeg, so make sure it is installed and available on your PATH.
+
+7. Or start the live server that exposes the latest transcript and synthesized audio over HTTP:
 
    ```bash
    python server.py
