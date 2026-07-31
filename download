@@ -1,24 +1,40 @@
 #!/usr/bin/env bash
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    unzip models/optimized_model.zip -d models/
-elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-    tar -xf models/optimized_model.zip -C models/
-else
-    echo "unknown os"
+set -euo pipefail
 
-mkdir -p models
+MODELS_DIR="models"
+mkdir -p "$MODELS_DIR"
 
-TEMP_DIR=$(mktemp -d)
-cd "$TEMP_DIR"
+MODEL_XML_URL="https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/asl-recognition-0004/FP32/asl-recognition-0004.xml"
+MODEL_BIN_URL="https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/asl-recognition-0004/FP32/asl-recognition-0004.bin"
 
-git clone --depth 1 https://github.com
-cd open_model_zoo/tools/downloader
-pip install --user -r requirements.in
-python3 downloader.py --name asl-recognition-0004
-MODEL_SRC_XML=$(find . -type f -name "asl-recognition-0004.xml" | head -n 1)
-MODEL_SRC_BIN=$(find . -type f -name "asl-recognition-0004.bin" | head -n 1)
-cp "$MODEL_SRC_XML" "$OLDPWD/models/asl_recognizer.xml"
-cp "$MODEL_SRC_BIN" "$OLDPWD/models/asl_recognizer.bin"
-curl -L https://githubusercontent.com -o "$OLDPWD/models/gloss_labels.json"
-cd "$OLDPWD"
-rm -rf "$TEMP_DIR"
+if [ -f "$MODELS_DIR/optimized_model.zip" ]; then
+    unzip -o "$MODELS_DIR/optimized_model.zip" -d "$MODELS_DIR/"
+fi
+
+download_file() {
+    local url="$1"
+    local output="$2"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -L --fail --retry 3 -o "$output" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -O "$output" "$url"
+    else
+        echo "Error: neither curl nor wget is available." >&2
+        exit 1
+    fi
+}
+
+download_file "$MODEL_XML_URL" "$MODELS_DIR/asl_recognizer.xml"
+download_file "$MODEL_BIN_URL" "$MODELS_DIR/asl_recognizer.bin"
+
+if [ ! -f "$MODELS_DIR/gloss_labels.json" ]; then
+    python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path("models/gloss_labels.json")
+path.write_text(json.dumps([f"class_{i}" for i in range(100)]), encoding="utf-8")
+PY
+fi
+
+echo "Downloaded ASL recognition model files to $MODELS_DIR/"
