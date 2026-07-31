@@ -1,4 +1,4 @@
-"""
+﻿"""
 Central configuration for the ASL -> T5 -> TTS pipeline.
 Edit these values to point at your actual model files.
 """
@@ -19,7 +19,7 @@ class ASLConfig:
 
     # "landmarks" = model expects a flattened MediaPipe hand-landmark vector
     # "frame"     = model expects a raw resized/normalized image frame
-    input_mode: str = "landmarks"
+    input_mode: str = "frame"
     frame_size: tuple = (224, 224)
 
     # Minimum softmax confidence to accept a prediction as a real sign
@@ -72,7 +72,7 @@ class TranslatorConfig:
     """Configuration for the translator model."""
 
     model_path: str = (
-        "optimized_t5_model"  # the folder saved in your notebook's last cell
+        "models"  # local folder unpacked by the download script
     )
     device: str = "cpu"  # quantized model was exported for CPU
     max_input_length: int = 64
@@ -107,3 +107,5 @@ class PipelineConfig:
     queue: AdaptiveQueueConfig = field(default_factory=AdaptiveQueueConfig)
     translator: TranslatorConfig = field(default_factory=TranslatorConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
+
+

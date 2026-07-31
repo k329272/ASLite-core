@@ -1,4 +1,4 @@
-"""HTTP API adapter for hosted ASLite inference.
+﻿"""HTTP API adapter for hosted ASLite inference.
 
 The original server.py reads from the server machine webcam. This adapter accepts
 browser-captured frames over HTTPS so ASLite can run on a cloud host.
@@ -17,14 +17,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from asl_recognizer import ASLRecognizer, ASLPrediction
 from config import PipelineConfig
-from pipeline import ASLSpeechPipeline
 
 ConfidenceLevel = Literal["high", "medium", "low"]
 
 
 class FrameRequest(BaseModel):
-    image_base64: str
+    image_base64: str | None = None
+    frames_base64: list[str] | None = None
 
 
 class TranslationAlternative(BaseModel):
@@ -60,10 +61,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_pipeline: Optional[ASLSpeechPipeline] = None
+_recognizer: Optional[ASLRecognizer] = None
 _latest = RecognitionResult(
     id="startup",
-    text="",
+    text="Camera ready. Start a scan to recognize a sign.",
     confidence=0,
     confidenceLevel="low",
     alternatives=[],
@@ -81,12 +82,15 @@ def confidence_level(confidence: float) -> ConfidenceLevel:
     return "low"
 
 
-def get_pipeline() -> ASLSpeechPipeline:
-    global _pipeline
-    if _pipeline is None:
-        _pipeline = ASLSpeechPipeline(PipelineConfig())
-        _pipeline.start()
-    return _pipeline
+def get_recognizer() -> ASLRecognizer:
+    global _recognizer
+    if _recognizer is None:
+        cfg = PipelineConfig().asl
+        cfg.input_mode = "frame"
+        cfg.min_stable_frames = 1
+        cfg.confidence_threshold = 0.2
+        _recognizer = ASLRecognizer(cfg)
+    return _recognizer
 
 
 def decode_frame(image_base64: str):
@@ -103,56 +107,65 @@ def decode_frame(image_base64: str):
     return frame
 
 
+def result_from_prediction(prediction: ASLPrediction | None) -> RecognitionResult:
+    if prediction is None or prediction.token is None:
+        return RecognitionResult(
+            id=f"aslite-{uuid.uuid4().hex[:10]}",
+            text="No clear sign detected yet.",
+            confidence=0,
+            confidenceLevel="low",
+            alternatives=[],
+            requiresConfirmation=True,
+            detectedSigns=[],
+            timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
+
+    confidence = float(prediction.confidence)
+    level = confidence_level(confidence)
+    label = prediction.token.replace("_", " ")
+    return RecognitionResult(
+        id=f"aslite-{uuid.uuid4().hex[:10]}",
+        text=label,
+        confidence=confidence,
+        confidenceLevel=level,
+        alternatives=[],
+        requiresConfirmation=level != "high",
+        detectedSigns=[
+            DetectedSign(
+                label=label,
+                confidence=confidence,
+                startTime=prediction.timestamp,
+                endTime=prediction.timestamp,
+            )
+        ],
+        timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    )
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "model_loaded": _pipeline is not None}
+    return {"ok": True, "model_loaded": _recognizer is not None}
 
 
 @app.post("/recognize-frame", response_model=RecognitionResult)
 def recognize_frame(request: FrameRequest):
     global _latest
-    pipeline = get_pipeline()
-    frame = decode_frame(request.image_base64)
+    recognizer = get_recognizer()
+    frames = request.frames_base64 or ([request.image_base64] if request.image_base64 else [])
+    if not frames:
+        raise HTTPException(status_code=400, detail="No frame payload provided")
 
-    prediction = pipeline.on_frame(frame)
-    text = pipeline.last_spoken_text or ""
-    confidence = 0.0
-    detected: list[DetectedSign] = []
+    prediction: ASLPrediction | None = None
+    for frame_payload in frames:
+        frame = decode_frame(frame_payload)
+        next_prediction = recognizer.process_frame(frame)
+        if next_prediction is not None:
+            prediction = next_prediction
 
-    if prediction is not None and prediction.token is not None:
-        text = prediction.token
-        confidence = float(prediction.confidence)
-        detected.append(
-            DetectedSign(
-                label=prediction.token,
-                confidence=confidence,
-                startTime=prediction.timestamp,
-                endTime=prediction.timestamp,
-            )
-        )
-
-    level = confidence_level(confidence)
-    _latest = RecognitionResult(
-        id=f"aslite-{uuid.uuid4().hex[:10]}",
-        text=text,
-        confidence=confidence,
-        confidenceLevel=level,
-        alternatives=[],
-        requiresConfirmation=level != "high",
-        detectedSigns=detected,
-        timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    )
+    _latest = result_from_prediction(prediction)
     return _latest
 
 
 @app.get("/translation/latest", response_model=RecognitionResult)
 def latest_translation():
     return _latest
-
-
-@app.on_event("shutdown")
-def shutdown():
-    global _pipeline
-    if _pipeline is not None:
-        _pipeline.stop()
-        _pipeline = None

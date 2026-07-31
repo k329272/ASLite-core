@@ -1,4 +1,4 @@
-"""
+﻿"""
 ASL sign recognition using OpenVINO Runtime.
 
 Two input modes are supported (set in config.ASLConfig.input_mode):
@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
@@ -83,6 +84,10 @@ class ASLRecognizer:
         self.compiled_model = core.compile_model(model, cfg.device)
         self.output_layer = self.compiled_model.output(0)
         self.input_layer = self.compiled_model.input(0)
+        input_shape = [int(dim) for dim in self.input_layer.shape]
+        self._expects_clip = len(input_shape) == 5
+        self._clip_len = input_shape[2] if self._expects_clip else 1
+        self._clip_frames = deque(maxlen=self._clip_len)
 
         if cfg.input_mode == "landmarks":
             if mp is None:
@@ -120,7 +125,14 @@ class ASLRecognizer:
         return chw
 
     def _infer(self, input_tensor: np.ndarray) -> ASLPrediction:
-        batched = np.expand_dims(input_tensor, 0)
+        if self._expects_clip:
+            self._clip_frames.append(input_tensor)
+            while len(self._clip_frames) < self._clip_len:
+                self._clip_frames.append(input_tensor)
+            model_input = np.stack(list(self._clip_frames), axis=1)
+            batched = np.expand_dims(model_input, 0)
+        else:
+            batched = np.expand_dims(input_tensor, 0)
         logits = self.compiled_model([batched])[self.output_layer]
         probs = self._softmax(logits[0])
         idx = int(np.argmax(probs))
@@ -190,3 +202,5 @@ class ASLRecognizer:
             return None
 
         return self._stabilize(raw)
+
+
