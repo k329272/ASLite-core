@@ -72,7 +72,7 @@ class TranslatorConfig:
     """Configuration for the translator model."""
 
     model_path: str = "models"  # local folder unpacked by the download script
-    device: str = "cpu"  # quantized model was exported for CPU
+    device: str = "cpu"
     max_input_length: int = 64
     max_new_tokens: int = 64
     num_beams: int = 4

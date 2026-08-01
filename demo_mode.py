@@ -3,7 +3,6 @@ import tempfile
 from typing import Optional
 
 import cv2
-import numpy as np
 
 from config import PipelineConfig
 from tts_engine import KittenTTSSpeaker

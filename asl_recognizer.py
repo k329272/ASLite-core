@@ -22,26 +22,10 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
-try:
-    import numpy as np
-except ImportError:  # pragma: no cover - optional runtime dependency
-    np = None  # type: ignore[assignment]
-
-try:
-    import cv2
-except ImportError:  # pragma: no cover - optional runtime dependency
-    cv2 = None  # type: ignore[assignment]
-
-try:
-    import openvino as ov
-except ImportError:  # pragma: no cover - optional runtime dependency
-    ov = None  # type: ignore[assignment]
-
-try:
-    import mediapipe as mp
-except ImportError:  # pragma: no cover - optional runtime dependency
-    mp = None  # type: ignore[assignment]
-
+import numpy as np
+import cv2
+import openvino as ov
+import mediapipe as mp
 from config import ASLConfig
 
 logger = logging.getLogger(__name__)
@@ -157,18 +141,14 @@ class ASLRecognizer:
             self._pending_count = 0
             return raw
 
-        if raw.token == self._pending_label:
-            self._pending_count += 1
-        else:
+        self._pending_count += 1
+        if raw.token != self._pending_label:
             self._pending_label = raw.token
             self._pending_count = 1
-
-        if self._pending_count < self.cfg.min_stable_frames:
-            return ASLPrediction(
-                token=None, confidence=raw.confidence, timestamp=raw.timestamp
-            )
-
-        if raw.token == self._confirmed_label:
+        if (
+            raw.token == self._confirmed_label
+            or self._pending_count < self.cfg.min_stable_frames
+        ):
             # Still holding the same already-accepted sign -- nothing new to emit.
             return ASLPrediction(
                 token=None, confidence=raw.confidence, timestamp=raw.timestamp
@@ -185,20 +165,14 @@ class ASLRecognizer:
         if now - self._last_infer_time < self._min_interval:
             return None
         self._last_infer_time = now
-
-        try:
-            if self.cfg.input_mode == "landmarks":
-                vec = self._extract_landmarks(frame_bgr)
-                if vec is None:
-                    self._pending_label = None
-                    self._pending_count = 0
-                    return None
-                raw = self._infer(vec)
-            else:
-                tensor = self._prep_frame(frame_bgr)
-                raw = self._infer(tensor)
-        except (RuntimeError, ValueError, TypeError, AttributeError):
-            logger.exception("ASL inference failed on this frame; skipping it")
-            return None
-
+        if self.cfg.input_mode == "landmarks":
+            vec = self._extract_landmarks(frame_bgr)
+            if vec is None:
+                self._pending_label = None
+                self._pending_count = 0
+                return None
+            raw = self._infer(vec)
+        else:
+            tensor = self._prep_frame(frame_bgr)
+            raw = self._infer(tensor)
         return self._stabilize(raw)
