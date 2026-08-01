@@ -46,12 +46,21 @@ class ASLSpeechPipeline:
         self.gloss_buffer.start()
         self.translator.start()
         self.speaker.start()
+        return self
 
     def stop(self):
-        """Stop all background workers in the pipeline."""
-        self.gloss_buffer.stop()
-        self.translator.stop()
+        """Stop all background workers cleanly in reverse order of dependency."""
         self.speaker.stop()
+        self.translator.stop()
+        self.gloss_buffer.stop()
+
+    def __enter__(self):
+        """Enable context manager usage (`with ASLSpeechPipeline(...) as pipeline:`)."""
+        return self.start()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Ensure threads stop gracefully upon exiting context."""
+        self.stop()
 
     @property
     def last_spoken_text(self) -> str:
@@ -71,7 +80,7 @@ class ASLSpeechPipeline:
     def on_frame(self, frame_bgr):
         """Process a single camera frame and forward any recognized token."""
         prediction = self.recognizer.process_frame(frame_bgr)
-        if prediction is not None and prediction.token is not None:
+        if prediction and getattr(prediction, "token", None) is not None:
             self.gloss_buffer.push(prediction.token)
             return prediction
         return None
