@@ -101,17 +101,23 @@ class KittenTTSSpeaker:
         fails for any reason. Some KittenTTS versions don't accept
         `cache_dir`, so that's retried without it before giving up."""
         try:
-            return _KittenTTSEngine(cfg.kittentts_model, cache_dir=cfg.kittentts_cache_dir)
+            return _KittenTTSEngine(
+                cfg.kittentts_model, cache_dir=cfg.kittentts_cache_dir
+            )
         except TypeError:
             pass  # this version's constructor doesn't take cache_dir
         except Exception as exc:  # pragma: no cover - runtime fallback path
-            logger.warning("KittenTTS initialization failed, using fallback synthesis: %s", exc)
+            logger.warning(
+                "KittenTTS initialization failed, using fallback synthesis: %s", exc
+            )
             return None
 
         try:
             return _KittenTTSEngine(cfg.kittentts_model)
         except Exception as exc:  # pragma: no cover - runtime fallback path
-            logger.warning("KittenTTS initialization failed, using fallback synthesis: %s", exc)
+            logger.warning(
+                "KittenTTS initialization failed, using fallback synthesis: %s", exc
+            )
             return None
 
     def start(self):

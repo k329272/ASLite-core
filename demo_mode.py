@@ -75,11 +75,16 @@ def _mux_audio(video_path: str, audio_path: str, output_path: str) -> bool:
     try:
         subprocess.run(
             [
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-i", audio_path,
-                "-c:v", "copy",
-                "-c:a", "aac",
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-i",
+                audio_path,
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
                 "-shortest",
                 output_path,
             ],

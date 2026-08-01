@@ -20,12 +20,11 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List, Union
 
 import numpy as np
 import cv2
 import openvino as ov
-import mediapipe as mp
 from config import ASLConfig
 
 logger = logging.getLogger(__name__)
@@ -41,16 +40,14 @@ class ASLPrediction:
 
 
 class ASLRecognizer:
-    """Run per-frame sign classification with a compiled OpenVINO model."""
+    """Run action/gesture classification matching OpenVINO model zoo signature."""
 
     def __init__(self, cfg: ASLConfig):
         self.cfg = cfg
         self._min_interval = 1.0 / cfg.inference_fps
         self._last_infer_time = 0.0
 
-        # Stability-smoothing state: a sign must be the top prediction for
-        # `cfg.min_stable_frames` consecutive inference passes before it's
-        # accepted and returned as a new token.
+        # Stability-smoothing state
         self._pending_label: Optional[str] = None
         self._pending_count = 0
         self._confirmed_label: Optional[str] = None
@@ -68,55 +65,59 @@ class ASLRecognizer:
         self.compiled_model = core.compile_model(model, cfg.device)
         self.output_layer = self.compiled_model.output(0)
         self.input_layer = self.compiled_model.input(0)
+
+        # Inspect model shape: expected shape is typically [B, C, T, H, W] or [B, T, C, H, W]
         input_shape = [int(dim) for dim in self.input_layer.shape]
-        self._expects_clip = len(input_shape) == 5
-        self._clip_len = input_shape[2] if self._expects_clip else 1
+
+        # Gesture recognition models expect 5D clip inputs [Batch, Channels, Temporal_Frames, Height, Width]
+        if len(input_shape) == 5:
+            self._clip_len = input_shape[2]
+            self._target_height = input_shape[3]
+            self._target_width = input_shape[4]
+        else:
+            self._clip_len = getattr(cfg, "clip_len", 16)
+            self._target_height = cfg.frame_size[1]
+            self._target_width = cfg.frame_size[0]
+
+        # Queue to accumulate temporal frame window
         self._clip_frames = deque(maxlen=self._clip_len)
 
-        if cfg.input_mode == "landmarks":
-            if mp is None:
-                raise RuntimeError("mediapipe is required for landmark input mode")
+    def _prep_frame(
+        self, frame_bgr: np.ndarray, roi: Optional[Union[List[int], np.ndarray]] = None
+    ) -> np.ndarray:
+        """Crops ROI (if provided), resizes, converts to RGB, and transposes to (C, H, W)."""
+        if roi is not None and len(roi) == 4:
+            x1, y1, x2, y2 = [int(v) for v in roi]
+            # Ensure ROI boundaries remain inside frame limits
+            h, w, _ = frame_bgr.shape
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
 
-            self._mp_hands = mp.solutions.hands.Hands(
-                static_image_mode=False,
-                max_num_hands=2,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
-            )
+            if x2 > x1 and y2 > y1:
+                frame_bgr = frame_bgr[y1:y2, x1:x2]
 
-    def _extract_landmarks(self, frame_bgr: np.ndarray) -> Optional[np.ndarray]:
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        result = self._mp_hands.process(rgb)
-        if not result.multi_hand_landmarks:
-            return None
+        resized = cv2.resize(frame_bgr, (self._target_width, self._target_height))
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32)
 
-        vecs = []
-        for hand_landmarks in result.multi_hand_landmarks[:2]:
-            for lm in hand_landmarks.landmark:
-                vecs.extend([lm.x, lm.y, lm.z])
-
-        # Pad to a fixed length (2 hands * 21 landmarks * 3 coords = 126) so the
-        # model always sees a consistent shape even with one hand visible.
-        target_len = 126
-        if len(vecs) < target_len:
-            vecs.extend([0.0] * (target_len - len(vecs)))
-        return np.array(vecs[:target_len], dtype=np.float32)
-
-    def _prep_frame(self, frame_bgr: np.ndarray) -> np.ndarray:
-        resized = cv2.resize(frame_bgr, self.cfg.frame_size)
-        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        # Transpose from (H, W, C) to (C, H, W)
         chw = np.transpose(rgb, (2, 0, 1))
         return chw
 
-    def _infer(self, input_tensor: np.ndarray) -> ASLPrediction:
-        if self._expects_clip:
-            self._clip_frames.append(input_tensor)
-            while len(self._clip_frames) < self._clip_len:
-                self._clip_frames.append(input_tensor)
-            model_input = np.stack(list(self._clip_frames), axis=1)
-            batched = np.expand_dims(model_input, 0)
-        else:
-            batched = np.expand_dims(input_tensor, 0)
+    def _infer(self, frame_tensor: np.ndarray) -> ASLPrediction:
+        """Appends preprocessed frame to clip buffer and executes 5D tensor inference."""
+        self._clip_frames.append(frame_tensor)
+
+        # Fill buffer on startup if not fully populated yet
+        while len(self._clip_frames) < self._clip_len:
+            self._clip_frames.append(frame_tensor)
+
+        # Stack temporal dimension: list of (C, H, W) -> (C, T, H, W)
+        clip_tensor = np.stack(list(self._clip_frames), axis=1)
+
+        # Add batch dimension -> (1, C, T, H, W)
+        batched = np.expand_dims(clip_tensor, axis=0)
+
+        # Execute OpenVINO inference pass
         logits = self.compiled_model([batched])[self.output_layer]
         probs = self._softmax(logits[0])
         idx = int(np.argmax(probs))
@@ -125,7 +126,13 @@ class ASLRecognizer:
 
         if conf < self.cfg.confidence_threshold:
             return ASLPrediction(token=None, confidence=conf, timestamp=now)
-        return ASLPrediction(token=self.labels[idx], confidence=conf, timestamp=now)
+
+        label = (
+            self.labels[idx]
+            if isinstance(self.labels, list)
+            else self.labels.get(str(idx), self.labels.get(idx))
+        )
+        return ASLPrediction(token=label, confidence=conf, timestamp=now)
 
     @staticmethod
     def _softmax(x: np.ndarray) -> np.ndarray:
@@ -133,9 +140,7 @@ class ASLRecognizer:
         return e / e.sum()
 
     def _stabilize(self, raw: ASLPrediction) -> ASLPrediction:
-        """Only lets a prediction through as a real token once the same
-        label has been the top prediction for several consecutive passes,
-        and only once per stable run (not on every subsequent frame)."""
+        """Filters out unstable predictions until top prediction remains stable over frames."""
         if raw.token is None:
             self._pending_label = None
             self._pending_count = 0
@@ -146,11 +151,11 @@ class ASLRecognizer:
         else:
             self._pending_label = raw.token
             self._pending_count = 1
+
         if (
             raw.token == self._confirmed_label
             or self._pending_count < self.cfg.min_stable_frames
         ):
-            # Still holding the same already-accepted sign -- nothing new to emit.
             return ASLPrediction(
                 token=None, confidence=raw.confidence, timestamp=raw.timestamp
             )
@@ -158,22 +163,15 @@ class ASLRecognizer:
         self._confirmed_label = raw.token
         return raw
 
-    def process_frame(self, frame_bgr: np.ndarray) -> Optional[ASLPrediction]:
-        """Call once per captured video frame. Internally throttled to
-        cfg.inference_fps and returns None on frames that are skipped or
-        where no sign was detected/confident/stable yet."""
+    def process_frame(
+        self, frame_bgr: np.ndarray, roi: Optional[Union[List[int], np.ndarray]] = None
+    ) -> Optional[ASLPrediction]:
+        """Main entry point. Accepts frame and optional bounding box ROI."""
         now = time.time()
         if now - self._last_infer_time < self._min_interval:
             return None
         self._last_infer_time = now
-        if self.cfg.input_mode == "landmarks":
-            vec = self._extract_landmarks(frame_bgr)
-            if vec is None:
-                self._pending_label = None
-                self._pending_count = 0
-                return None
-            raw = self._infer(vec)
-        else:
-            tensor = self._prep_frame(frame_bgr)
-            raw = self._infer(tensor)
+
+        tensor = self._prep_frame(frame_bgr, roi=roi)
+        raw = self._infer(tensor)
         return self._stabilize(raw)
