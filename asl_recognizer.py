@@ -141,8 +141,9 @@ class ASLRecognizer:
             self._pending_count = 0
             return raw
 
-        self._pending_count += 1
-        if raw.token != self._pending_label:
+        if raw.token == self._pending_label:
+            self._pending_count += 1
+        else:
             self._pending_label = raw.token
             self._pending_count = 1
         if (

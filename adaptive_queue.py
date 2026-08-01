@@ -25,6 +25,7 @@ from collections import deque
 from typing import List, Optional
 
 from config import AdaptiveQueueConfig
+from pacing import adaptive_pause_threshold
 
 
 class AdaptiveGlossQueue:
@@ -61,17 +62,7 @@ class AdaptiveGlossQueue:
 
     def _current_pause_threshold(self) -> float:
         """Return the adaptive pause threshold for the current signing pace."""
-        if not self._gap_history:
-            return self.cfg.base_pause_seconds
-
-        avg_gap = sum(self._gap_history) / len(self._gap_history)
-        # Fast signing (small avg_gap) -> smaller factor -> shorter pause needed.
-        # Slow signing (large avg_gap) -> larger factor -> more patience before flushing.
-        factor = min(
-            max(avg_gap / self.cfg.base_pause_seconds, self.cfg.min_adaptive_factor),
-            self.cfg.max_adaptive_factor,
-        )
-        return self.cfg.base_pause_seconds * factor
+        return adaptive_pause_threshold(self._gap_history, self.cfg)
 
     def _flush(self):
         """Emit the current buffer to the downstream queue."""

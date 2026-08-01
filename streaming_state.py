@@ -23,6 +23,7 @@ from collections import deque
 from typing import List, Optional, Tuple
 
 from config import AdaptiveQueueConfig
+from pacing import adaptive_pause_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -241,14 +242,7 @@ class StreamingGlossBuffer:
 
     def _current_pause_threshold(self) -> float:
         """Compute the adaptive pause threshold for the current signing pace."""
-        if not self._gap_history:
-            return self.cfg.base_pause_seconds
-        avg_gap = sum(self._gap_history) / len(self._gap_history)
-        factor = min(
-            max(avg_gap / self.cfg.base_pause_seconds, self.cfg.min_adaptive_factor),
-            self.cfg.max_adaptive_factor,
-        )
-        return self.cfg.base_pause_seconds * factor
+        return adaptive_pause_threshold(self._gap_history, self.cfg)
 
     def _end_sentence(self):
         """Signal that the current sentence has ended."""

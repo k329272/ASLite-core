@@ -78,43 +78,8 @@ class KittenTTSSpeaker:
                 "KittenTTS support requires numpy, soundfile, sounddevice, and kittentts"
             )
 
-        self._use_fallback_synth = False
-        if _KittenTTSEngine is None:
-            self.engine = None
-            self._use_fallback_synth = True
-        else:
-            try:
-                self.engine = _KittenTTSEngine(
-                    getattr(
-                        self.cfg,
-                        "kittentts_model",
-                        getattr(self.cfg, "kitttentts_model", ""),
-                    ),
-                    cache_dir=getattr(self.cfg, "kittentts_cache_dir", None),
-                )
-            except TypeError:
-                try:
-                    self.engine = _KittenTTSEngine(
-                        getattr(
-                            self.cfg,
-                            "kittentts_model",
-                            getattr(self.cfg, "kitttentts_model", ""),
-                        )
-                    )
-                except Exception as exc:  # pragma: no cover - runtime fallback path
-                    logger.warning(
-                        "KittenTTS initialization failed, using fallback synthesis: %s",
-                        exc,
-                    )
-                    self.engine = None
-                    self._use_fallback_synth = True
-            except Exception as exc:  # pragma: no cover - runtime fallback path
-                logger.warning(
-                    "KittenTTS initialization failed, using fallback synthesis: %s",
-                    exc,
-                )
-                self.engine = None
-                self._use_fallback_synth = True
+        self.engine = self._init_engine(cfg)
+        self._use_fallback_synth = self.engine is None
 
         self.last_spoken_text = ""  # readable by other threads for UI display only
         self.last_audio_payload = b""
@@ -128,6 +93,26 @@ class KittenTTSSpeaker:
         self._playback_thread = threading.Thread(
             target=self._playback_loop, daemon=True
         )
+
+    @staticmethod
+    def _init_engine(cfg: TTSConfig):
+        """Construct the KittenTTS engine, falling back to None (which
+        triggers the deterministic fallback synthesizer) if construction
+        fails for any reason. Some KittenTTS versions don't accept
+        `cache_dir`, so that's retried without it before giving up."""
+        try:
+            return _KittenTTSEngine(cfg.kittentts_model, cache_dir=cfg.kittentts_cache_dir)
+        except TypeError:
+            pass  # this version's constructor doesn't take cache_dir
+        except Exception as exc:  # pragma: no cover - runtime fallback path
+            logger.warning("KittenTTS initialization failed, using fallback synthesis: %s", exc)
+            return None
+
+        try:
+            return _KittenTTSEngine(cfg.kittentts_model)
+        except Exception as exc:  # pragma: no cover - runtime fallback path
+            logger.warning("KittenTTS initialization failed, using fallback synthesis: %s", exc)
+            return None
 
     def start(self):
         """Start the decision and playback worker threads."""
@@ -164,16 +149,8 @@ class KittenTTSSpeaker:
         try:
             audio = self.engine.generate(
                 word,
-                voice=getattr(
-                    self.cfg,
-                    "kittentts_voice",
-                    getattr(self.cfg, "kitttentts_voice", "Jasper"),
-                ),
-                speed=getattr(
-                    self.cfg,
-                    "kittentts_speed",
-                    getattr(self.cfg, "kitttentts_speed", 1.0),
-                ),
+                voice=self.cfg.kittentts_voice,
+                speed=self.cfg.kittentts_speed,
                 clean_text=True,
             )
             audio_arr = np.asarray(audio, dtype=np.float32)
